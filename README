@@ -1,0 +1,17 @@
+This is some crap for taking output from weather stations that report via HTTP
+
+* HTTP
+	Protocol: AmbientWeather (eventually or WeatherUnderground)
+	Host: Your server IP
+	Port: 9990
+	Path: /report/?data=y
+	- This *must* be as such, to work around invalid GET query parameters from wx station (first arg with & instead of ?)
+
+
+
+-----------
+You can tell an instance on one host to upload to another using forwarders.
+
+You can also configure the IRC bot to connect to a remote ambientwx-proxy.
+
+See config.example.yml

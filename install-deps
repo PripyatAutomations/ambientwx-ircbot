@@ -1,0 +1,2 @@
+#!/bin/sh
+apt install -y libpoe-component-irc-perl  libpoe-component-client-dns-perl libpoe-component-client-dns-perl libdbi-perl libdbd-sqlite3-perl 

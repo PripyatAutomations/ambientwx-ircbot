@@ -1,0 +1,37 @@
+cache:
+  sensors:
+    path: /tmp/sensors.current
+  wx:
+    path: /tmp/ambientwx.current
+
+httpd:
+  debug: 0              
+  bind: 0.0.0.0
+  port: 9990
+  forwarders:
+    ambient2mqtt:
+      enabled: true
+      type: GET
+      url: http://127.0.0.1:9999/data
+      sanitize:
+      - PASSKEY
+      - token
+      - secret
+    ircbot:
+      enabled: true
+      type: GET
+      url: http://192.168.15.11:9990/report/
+      sanitize:
+      - PASSKEY
+
+irc:
+  debug: 9
+  database: turdbot.db
+  sensors:
+    type: http
+    url: http://127.0.0.1:8123/current/mqtt/
+  wx:
+    type: http
+    url: http://127.0.0.1:9990/current/
+#     type: cache
+#     path: /tmp/ambientwx.current

@@ -1,0 +1,7 @@
+- Add support for !page with restrictions on when/who can use it stored in db
+
+* Implement a way to have the httpd send to a remote irc-bot instead of the file
+  in case one wants to keep them separated
+	- PUSH and PULL versions of this
+		- irc-bot listens for HTTP POSTs 
+		- irc-bot polls httpd via GET

@@ -3,39 +3,34 @@
 # If you want to modify them, either insert initial values and set over
 # IRC or type /help in the script (NYI)
 #
-#
 # XXX: Deal with alternate nicks, nick changes, nick collisions.
 # XXX: Deal with channel join issues (+k, +b, etc)
 # XXX: Throttle commands
 # XXX: minimal POE Readline interface (or just text if missing) to add users/nets/servers/chans
 # XXX: Ensure only one connection per network
+# XXX: Handle aliases (multiple nicknames)
+my $botbrand = "turdbot";
+my $version = "20240730.01";
+
+# This is a possible security issue allowing uid 0 to do anything
+#  - set to 0 to disable
+my $allow_superuser = 0;
+
 use strict;
 use warnings;
 use Data::Dumper;
 use DBI;
+use Digest::SHA qw(sha256_hex);
 use HTTP::Request;
 use LWP::UserAgent;
-use POE qw(Component::IRC);
+use POE;
+use POE::Component::Client::DNS;
+use POE::Component::IRC;
+#use POE::Component::IRC::Plugin::BotTraffic;
+use POE::Component::IRC::Plugin::BotAddressed;
+#use POE::Component::IRC::Plugin::Console
 use Time::Piece;
 use YAML::XS;
-
-my $config_file = "config.yml";
-   $config_file = $ENV{HOME} . "/ambientwx.yml" if (! -e $config_file);
-
-die("Missing configuration - place it at $config_file or ./config.yml and try again!\n") if (! -e $config_file);
-
-########################################
-my $version = "20240729.01";
-my $config = YAML::XS::LoadFile($config_file);
-
-# Pull out some oft used configuration values
-my $debug = $config->{irc}->{debug};
-my $database = $config->{irc}->{database};
-my $wx_file = $config->{irc}->{wx}->{path};
-my $sensors_data_file = $config->{irc}->{sensors}->{path};
-
-# Open our database
-my $dbh = DBI->connect("dbi:SQLite:dbname=$database", "", "", { RaiseError => 1, AutoCommit => 1 }) or die $DBI::errstr;
 
 ################
 # Global state #
@@ -45,6 +40,19 @@ my %servers;
 my %users;
 my %channels;
 
+# Try to find our config file...
+my $config_file = "config.yml";
+   $config_file = $ENV{HOME} . "/ambientwx.yml" if (! -e $config_file);
+die("Missing configuration - place it at $config_file or ./config.yml and try again!\n") if (! -e $config_file);
+my $config = YAML::XS::LoadFile($config_file);
+# Pull out some oft used configuration values
+my $debug = $config->{irc}->{debug};
+my $database = $config->{irc}->{database};
+my $wx_file = $config->{cache}->{wx}->{path};
+my $sensors_data_file = $config->{cache}->{sensors}->{path};
+my $dns = POE::Component::Client::DNS->spawn();
+my $dbh = DBI->connect("dbi:SQLite:dbname=$database", "", "", { RaiseError => 1, AutoCommit => 1 }) or die $DBI::errstr;
+
 ###############################################################################
 # Database #
 ###############################################################################
@@ -53,29 +61,56 @@ sub load_users {
    my $sth_users = $dbh->prepare("SELECT * FROM users");
    $sth_users->execute();
    while (my $row = $sth_users->fetchrow_hashref) {
-      my ($uid, $user, $nick, $ident, $host, $pass, $privileges, $disabled) = (
+      my ($uid, $user, $ident, $host, $pass, $privileges, $disabled) = (
          $row->{uid},
          $row->{user},
-         $row->{nick},
          $row->{ident},
          $row->{host},
          $row->{pass},
-         $row->{privileges} || '',
-         $row->{disabled} || 1
+         $row->{privileges},
+         $row->{disabled}
       );
 
-      print " - $user ($uid) is ${nick}!${ident}\@${host} with privileges [$privileges]" . ($disabled ? "" : "disabled") . "\n";
-      next if ($disabled);
+      if ($disabled) {
+         print " * skipped disabled user $user ($uid)\n";
+         next;
+      }
 
-      $users{$row->{uid}} = {
-         nick       => $nick,
+      print " - $user ($uid) is ${ident}\@${host} with privileges [$privileges]" . ($disabled ? "disabled" : "") . "\n";
+
+      $users{$uid} = {
          user       => $user,
          ident      => $ident,
          host       => $host,
          pass       => $pass,
          privileges => $privileges,
-         disabled   => $disabled
+         disabled   => $disabled,
+         current_nick => '',		# do_login and on_nick will update this
+         logged_in  => 0,		# do_login will set this
+         alt_nicks  => []		# this will contain alternate nicks
       };
+
+      # load alternate nicks for the user
+      load_alt_nicks($uid);
+   }
+}
+
+sub load_alt_nicks {
+   my $uid = @_;
+   my $query = "SELECT alt_nick FROM alt_nicks WHERE uid = $uid";
+   my $sth = $dbh->prepare($query);
+   $sth->execute();
+    
+   while (my $row = $sth->fetchrow_hashref) {
+      my $alt_nick = $row->{alt_nick};
+
+      if (exists $users{$uid}) {
+         print " => alternate nick $alt_nick added to userid $uid \n";
+         push @{$users{$uid}{alt_nicks}}, $alt_nick;
+      } else {
+         print " *** alternate nick $alt_nick for non-existent userid ($uid)\n";
+         next;
+      }
    }
 }
 
@@ -152,32 +187,169 @@ sub load_servers {
    return $servers_count;
 }
 
+sub reload_db {
+   load_users();
+   load_networks();
+}
+
+sub get_username {
+   my ($uid) = @_;
+   if (exists $users{$uid}) {
+      return $users{$uid}->{user};
+   } else {
+      return "INVALIDUSER";
+   }
+}
+   
+sub get_uid {
+   my ($username) = @_;
+
+   for my $uid (keys %users) {
+      if ($users{$uid}->{user} eq $username) {
+         print "* mapped usernme $username to uid $uid" if ($debug >= 9);
+         return $uid;
+      }
+   }
+
+   return -1;
+}
+
 sub get_network_name {
-    my ($nid) = @_;
+   my ($nid) = @_;
     
-    if (exists $networks{$nid}) {
-        return $networks{$nid}->{network};
-    } else {
-        return 'Unknown Network';
-    }
+   if (exists $networks{$nid}) {
+      return $networks{$nid}->{network};
+   } else {
+      return 'Unknown Network';
+   }
 }
 
 sub get_my_nick {
-    my ($nid) = @_;
+   my ($nid) = @_;
 
-    if (exists $networks{$nid}) {
-       my $nick = $networks{$nid}->{nick};
-       return $nick;
-    } else {
-       print "get_my_nick: invalid nid: $nid\n";
+   if (exists $networks{$nid}) {
+      my $nick = $networks{$nid}->{nick};
+      return $nick;
+   } else {
+      print "get_my_nick: invalid nid: $nid\n";
+   }
+   return 'INVALIDNICK';
+}
+
+sub get_my_irc {
+   my ($nid) = @_;
+
+   if (exists $networks{$nid}) {
+      my $irc = $networks{$nid}->{irc};
+      return $irc;
+   } else {
+      print "get_my_irc: invalid nid: $nid\n";
+   }
+   return;
+}
+
+sub do_login {
+   my ($nick, $account,$nid, $password) = @_;
+   my $network = get_network_name($nid);
+   my $irc = get_my_irc($nid);
+   my $uid = get_uid($account);
+   my $user = get_username($uid);
+
+   if ($uid == -1) {
+      print "*** FAILED LOGIN *** for unknown $account by $nick on $network ($nid).\n";
+      return 0;
+   }
+
+   if ($users{$uid}->{user} eq $account) {
+      my $stored_passwd = $users{$uid}->{pass};
+      my $hashed_passwd = sha256_hex($password);
+
+      if ($hashed_passwd eq $stored_passwd) {
+         $users{$uid}->{logged_in} = 1;
+         $users{$uid}->{current_nick} = $nick;
+         print "*** LOGIN *** for $account by $nick on $network ($nid)\n";
+         $irc->yield(notice => $nick => "You are now logged in as \002$account\002!");
+         return 1;
+      } else {
+         print "*** BAD PASS *** for $account by $nick on $network ($nid)\n";
+         print "--- Attempt: $hashed_passwd - Actual: $stored_passwd\n" if ($debug >= 9);
+      }
+   }
+   $irc->yield(notice => $nick => "Incorrect username/password.");
+   # XXX: We should keep track of failed logins here and IGNORE the sender after some abuse...
+   return 0;
+}
+
+sub is_logged_in {
+    my ($nick, $network) = @_;
+    my $uid = get_uid($nick);
+
+    if (exists $users{$uid} && $users{$uid}->{logged_in}) {
+        return 1;
     }
-    return 'INVALIDNICK';
+    return 0;
+}
+
+# User Access Check
+sub check_auth {
+    my ($nick, $nid, $level) = @_;
+    return 0 unless $level;
+
+    # XXX: this should use get_uid_by_altnick() or such...
+    my $uid = get_uid($nick);
+    my $network = get_network_name($nid);
+    print "check_auth: $nick, $level\n";
+
+    # First user (uid 0) is superuser, if this is enabled
+    if ($allow_superuser && $uid == 0) {
+       print "*superuser* login (DISABLE THIS BY DISABLING \$allow_superuser in bot.pl for improved security!)\n";
+       return 1;
+    }
+
+    my $c = 0;
+    foreach my $uid (keys %users) {
+       $c++;
+       my $user = $users{$uid};
+       # Try the current nickname for the account, tho this allows only one login per account...
+       # XXX: How to fix this without relying on nick registration?
+       if ($user->{current_nick} eq $nick) {
+          my $privileges = $user->{privileges};
+
+          if ($privileges =~ /\b\Q$level\E\b/ || $privileges =~ /\*/) {
+             print " ### $nick has privilege $level, granting access\n";
+             return 1;
+          } else {
+             print " ### $nick does not have privilege $level, denying access\n";
+             return 0;
+          }
+          last;
+      }
+   }
+   print "c: $c\n";
+
+   print " ### $nick does not exist denying access\n";
+   return 0;
+}
+
+sub do_logout {
+   my ($nick) = @_;
+   return unless $nick;
+
+   # Find account that is active for this nick
+   # XXX: This should call get_uid_by_altnick or such so account doesn't have to match nick
+   my $uid = get_uid($nick);
+   my $user = get_username($uid);
+
+   print "* Logging out $nick user ($uid)\n";
+   # Clear it's logged_in and current_nick properties
+   $users{$uid}->{logged_in} = 0;
+   $users{$uid}->{current_nick} = '';
 }
 
 ###############################################################################
 # Sensors #
 ###############################################################################
-sub get_sensor_message {
+sub get_sensor_msg {
    my @occupancy_types = ( 'car', 'cat', 'dog', 'person', 'bicycle' );
    my $occupancy_valid = 0;
    my $objdet_cars = 0;
@@ -217,29 +389,66 @@ sub handle_default {
 }
 
 sub bot_start {
-    print "* ENTER bot_start\n";
-    my ($kernel, $heap) = @_[KERNEL, HEAP];
-    my $irc = $heap->{irc};
-    my $nid = $heap->{nid};
-    my $network = get_network_name($nid);
-    my $nick = get_my_nick($nid);
-    my $server = $heap->{server};
-    $heap->{debug} = 1;
-
-    print "Connecting as $nick on network: $network ($nid) via server: $server\n";
-    $irc->yield(register => "all");
-#    $irc->yield(connect => { Nick => $nick, Server => $server });
-    $irc->yield(connect => { });
-    print "* EXIT bot_start\n";
-    return;
+   my ($kernel, $heap) = @_[KERNEL, HEAP];
+   my $irc = $heap->{irc};
+   my $nid = $heap->{nid};
+   my $network = get_network_name($nid);
+   my $nick = get_my_nick($nid);
+   my $server = $heap->{server};
+   $heap->{debug} = 1;
+   print "Connecting as $nick on network: $network ($nid) via server: $server\n";
+   $irc->yield(register => "all");
+   $irc->yield(connect => { });
+   return;
 }
 
-sub on_public_message {
+sub on_ctcp_action {
    my ($kernel, $who, $where, $msg, $heap) = @_[KERNEL, ARG0, ARG1, ARG2, HEAP];
    my $nick = (split /!/, $who)[0];
    my $channel = $where->[0];
    my $server = $heap->{server};
    my $sender = "$nick\@$server/$channel";
+   my $irc = $heap->{irc};
+   my $nid = $heap->{nid};
+   my $network = get_network_name($nid);
+   print " * *$sender* $msg\n";
+}
+
+sub on_ctcp {
+   my ($kernel, $what, $who, $where, $heap) = @_[KERNEL, ARG0, ARG1, ARG2, HEAP];
+   my $nick = (split /!/, $who)[0];
+   my $channel = $where->[0];
+   my $server = $heap->{server};
+   my $sender = "$nick\@$server/$channel";
+   my $irc = $heap->{irc};
+   my $nid = $heap->{nid};
+   my $network = get_network_name($nid);
+
+   print " *CTCP/$what* from [$sender] on $network ($nid)\n";
+}
+
+sub on_ctcp_version {
+   my ($kernel, $who, $where, $heap) = @_[KERNEL, ARG0, ARG1, HEAP];
+   my $nick = (split /!/, $who)[0];
+   my $target = $where->[0];
+   my $irc = $heap->{irc};
+   my $nid = $heap->{nid};
+   my $network = get_network_name($nid);
+   my $sender = "$nick\@$network/$target";
+
+   print "*VERSION* request from $who on $network ($nid) to $target, replying\n";
+   $irc->yield(ctcpreply => $nick => 'VERSION $botbrand/$version');
+}
+
+sub on_public_message {
+   my ($kernel, $who, $where, $msg, $heap) = @_[KERNEL, ARG0, ARG1, ARG2, HEAP];
+   my $nick = (split /!/, $who)[0];
+   my $nid = $heap->{nid};
+   my $network = get_network_name($nid);
+   my $channel = $where->[0];
+   my $server = $heap->{server};
+   my $sender = "$nick\@$server/$channel";
+   my $irc = $heap->{irc};
 
    print "[$sender] $msg\n";
 
@@ -247,15 +456,30 @@ sub on_public_message {
       send_adsb($channel, $heap);
    } elsif ($msg =~ /^!birds$/i) {
       send_birds($channel, $heap);
-   } elsif ($msg =~ /^!tacos$/i) {
-      send_wx($channel, $heap);
+   } elsif ($msg =~ /^!dns/i) {
+      send_dns_lookup($heap, $nid, $channel, $nick, $msg);
    } elsif ($msg =~ /^!help$/i) {
       send_help($nick, $heap);
    } elsif ($msg =~ /^!quit$/i) {
-      if (is_privileged($nick, $heap->{nid}, 'quit')) {
-         print "* Got QUIT command from $nick in $channel, exiting!\n";
-         $heap->{irc}->yield(shutdown => "Bot is shutting down");
+      if (check_auth($nick, $heap->{nid}, 'admin')) {
+         print "* Got QUIT command from $nick in $channel on $network ($nid) - exiting!\n";
+         $irc->yield(shutdown => "Bot is shutting down as requested by $nick");
+      } else {
+         print "* Got QUIT command from $nick in $channel on $network ($nid) - ignoring due to no privileges\n";
+         $irc->yield(notice => $nick => "You do not have permission to shutdown the bot!");
       }
+   } elsif ($msg =~ /^!restart$/i) {
+      if (check_auth($nick, $heap->{nid}, 'admin')) {
+         print "* Got RESTART command from $nick in $channel, exiting!\n";
+         $irc->yield(shutdown => "Bot is restarting as requested by $nick");
+      } else {
+         print "* Got RESTART command from $nick in $channel on $network ($nid) - ignoring due to no privileges\n";
+         $irc->yield(notice => $nick => "You do not have permission to restart the bot!");
+      }
+   } elsif ($msg =~ /^!sensors$/i) {
+      send_sensors($channel, $heap);
+   } elsif ($msg =~ /^!tacos$/i) {
+      send_wx($channel, $heap);
    }
 }
 
@@ -264,6 +488,8 @@ sub on_private_message {
    my $irc = $heap->{irc};
    my $nick = (split /!/, $who)[0];
    my $server = $heap->{server};
+   my $nid = $heap->{nid};
+   my $network = get_network_name($nid);
 
    print "*$nick\@[$server]* $msg\n";
 
@@ -271,36 +497,79 @@ sub on_private_message {
       send_adsb($nick, $heap);
    } elsif ($msg =~ /^!birds$/i) {
       send_birds($nick, $heap);
-   } elsif ($msg =~ /^!tacos$/i) {
-      send_wx($nick, $heap);
+   } elsif ($msg =~ /^!dns/i) {
+      send_dns_lookup($heap, $nid, $nick, $nick, $msg);
    } elsif ($msg =~ /^!help$/i) {
       send_help($nick, $heap);
-   } elsif ($msg =~ /^!quit$/) {
-      if (is_privileged($nick, $heap->{nid}, 'quit')) {
-         print "* Got QUIT command from $nick, exiting!\n";
-         $heap->{irc}->yield(shutdown => "Bot is shutting down");
+   } elsif ($msg =~ /^!join\s+(\S+)\s+(\S+)$/i) {
+      my ($chan, $key) = ($1, $2);
+      add_channel($nick, $heap, $chan, $key);
+   } elsif ($msg =~ /^!join\s+(\S+)$/i) {
+      my ($chan) = ($1);
+      add_channel($nick, $heap, $chan, '');
+   } elsif ($msg =~ /^!login\s+(\S+)\s+(\S+)$/i) {
+      my ($username, $password) = ($1, $2);
+      do_login($nick, $username, $nid, $password);
+   } elsif ($msg =~ /^!login\s+(\S+)$/i) {		# short form, if nick == username
+      my ($password) = ($1);
+      do_login($nick, $nick, $nid, $password);
+   } elsif ($msg =~ /^!logout$/i) {
+      do_logout($nick);
+   } elsif ($msg =~ /^!part\s+(\S+)$/i) {
+      my ($chan) = ($1);
+      remove_channel($nick, $heap, $chan);
+   } elsif ($msg =~ /^!quit$/i) {
+      if (check_auth($nick, $nid, 'admin')) {
+         print "* Got QUIT command from $nick on $network ($nid), exiting!\n";
+         $irc->yield(shutdown => "Bot is shutting down");
+      } else {
+         print "* Got QUIT command from $nick on $network ($nid) - ignoring due to no privileges\n";
+         $irc->yield(notice => $nick => "You do not have permission to shutdown the bot!");
       }
+   } elsif ($msg =~ /^!reload$/i) {
+      if (check_auth($nick, $nid, 'admin')) {
+         print "* Got RELOAD command from $nick on $network ($nid), reloading database!\n";
+         $irc->yield(notice => $nick => "Reloading!");
+         reload_db();
+      } else {
+         print "* Got RELOAD command from $nick on $network ($nid) - ignoring due to no privileges\n";
+         $irc->yield(notice => $nick => "You do not have permission to reload the bot!");
+      }
+   } elsif ($msg =~ /^!restart$/i) {
+      if (check_auth($nick, $nid, 'admin')) {
+         print "* Got RESTART command from $nick - exiting!\n";
+         $irc->yield(shutdown => "Bot is restarting as requested by $nick");
+      } else {
+         print "* Got RESTART command from $nick on $network ($nid) - ignoring due to no privileges\n";
+         $irc->yield(notice => $nick => "You do not have permission to restart the bot!");
+      }
+   } elsif ($msg =~ /^!sensors$/i) {
+      send_sensors($nick, $heap);
+   } elsif ($msg =~ /^!tacos$/i) {
+      send_wx($nick, $heap);
+   } elsif ($msg =~ /^!users$/i) {
+      dump_users($nick, $heap);
    }
 }
 
 # Ping ourselves, but only if we haven't seen any traffic since the last ping. 
 # This prevents us from pinging ourselves more than necessary (which tends to get noticed by server operators).
-#sub bot_do_autoping {
-#   my ($kernel, $heap) = @_[KERNEL, HEAP];
+sub bot_do_autoping {
+   my ($kernel, $heap) = @_[KERNEL, HEAP];
 
-#   $kernel->post(poco_irc => userhost => $heap->{nick})
-#      unless $heap->{seen_traffic};
+   $kernel->post(poco_irc => userhost => $heap->{nick})
+      unless $heap->{seen_traffic};
 
-#   $heap->{seen_traffic} = 0;
-#   $kernel->delay(autoping => 300);
-#}
+   $heap->{seen_traffic} = 0;
+   $kernel->delay(autoping => 300);
+}
 
 sub bot_reconnect {
    my $kernel = $_[KERNEL];
 
    # Throttle reconnecting
-#   $kernel->delay(autoping => undef);
-#   $kernel->delay(connect  => 60);
+   $kernel->delay(autoping => undef);
+   $kernel->delay(connect  => 60);
 }
 
 sub on_shutdown {
@@ -317,6 +586,8 @@ sub on_registered {
    my $server = $heap->{server};
    my $network = get_network_name($nid);
    print "Registered on $network ($nid) via $server\n";
+   # XXX: We need to start a timer here and clear it in on_bot_001, which times out if we do not connect
+   # XXX: try the next server for the network, if available. If not, reconnect in soon
 }
 
 # Once connected, start a periodic timer to ping ourselves.  This
@@ -324,76 +595,200 @@ sub on_registered {
 # socket may stall, and you won't receive a disconnect notice for
 # up to several hours.
 sub on_bot_001 {
-#   my ($kernel, $sender, $heap) = @_[KERNEL, SENDER, HEAP];
-   my $heap = $_[HEAP];
-   my $sender = $_[SENDER];
+   my ($kernel, $sender, $heap) = @_[KERNEL, SENDER, HEAP];
    my $irc = $sender->get_heap();
    my $nid = $heap->{nid};
    my $network = get_network_name($nid);
- 
+
+   # XXX: Clear the timer we set in on_registered 
    print "* Connected to network $network ($nid)\n";
-#   $heap->{seen_traffic} = 1;
-#   $kernel->delay(autoping => 300);
+   $heap->{seen_traffic} = 1;
+   $kernel->delay(autoping => 300);
    join_channels($nid);
 }
 
-sub on_connected {
-   my ($kernel, $heap) = @_[KERNEL, HEAP];
+sub on_join {
+   my ($kernel, $heap, $who, $where) = @_[KERNEL, HEAP, ARG0, ARG1];
    my $nid = $heap->{nid};
-   print "Connected to $nid\n";
+   my $network = get_network_name($nid);
+   my $nick = (split /!/, $who)[0];
+
+   # XXX: Update %channels entry
+   print " $where\@$network ($nid) JOIN $nick\n";
+}
+
+sub on_part {
+   my ($kernel, $heap, $who, $where) = @_[KERNEL, HEAP, ARG0, ARG1];
+   my $nid = $heap->{nid};
+   my $network = get_network_name($nid);
+   my $nick = (split /!/, $who)[0];
+
+   print " $where\@$network ($nid) PART $nick\n";
+}
+
+sub on_quit {
+   my ($kernel, $heap, $who, $where) = @_[KERNEL, HEAP, ARG0, ARG1];
+   my $nid = $heap->{nid};
+   my $network = get_network_name($nid);
+   my $nick = (split /!/, $who)[0];
+
+   print " $where\@$network ($nid) QUIT $nick\n";
+   my $uid = get_uid($nick);
+
+   if (exists $users{$uid}) {
+      $users{uid}->current_nick = undef;
+      $users{uid}->logged_in = 0;
+   }
+}
+
+sub on_connected {
+   my ($kernel, $heap, $server) = @_[KERNEL, HEAP, ARG0];
+   my $nid = $heap->{nid};
+   my $network = get_network_name($nid);
+   print "Connected to $network ($nid) via $server\n";
+}
+
+sub on_snotice {
+   my ($kernel, $heap, $msg, $who) = @_[KERNEL, HEAP, ARG0, ARG1];
+   my $nid = $heap->{nid};
+   my $network = get_network_name($nid);
+
+   print "* $network ($nid): $who $msg\n"
+}
+
+sub on_ping {
+   my ($kernel, $heap, $msg) = @_[KERNEL, HEAP, ARG0];
+   my $nid = $heap->{nid};
+   my $network = get_network_name($nid);
+   print "*PING* from $network, replying\n" if ($debug >= 9);
+}
+
+sub noop {
 }
 
 sub create_irc_connection {
-    my ($server_id) = @_;
-    my $server = $servers{$server_id} or die "Server ID $server_id not found!";
-    
-    my $nid = $server->{nid};
-    my $host = $server->{host};
-    my $port = $server->{port};
-    my $nick = get_my_nick($nid);
-    my $network = get_network_name($nid);
-    my $pass = $server->{pass} || '';
-    my $dest = "$host:$port";
+   my ($server_id) = @_;
+   my $server = $servers{$server_id} or die "Server ID $server_id not found!";
+   
+   my $nid = $server->{nid};
+   my $host = $server->{host};
+   my $port = $server->{port};
+   my $nick = get_my_nick($nid);
+   my $network = get_network_name($nid);
+   my $pass = $server->{pass} || '';
+   my $dest = "$host:$port";
 
-    print "* Creating IRC connection to $network ($nid) as $nick via $dest\n";
-    my $irc = POE::Component::IRC->spawn(
-        Nick     => $nick,
-        Server   => $host,
-        Port     => $port,
-        Password => $pass,
-    );
+   print "* Creating IRC connection to $network ($nid) as $nick via $dest\n";
+   my $irc = POE::Component::IRC->spawn(
+       Nick     => $nick,
+       Server   => $host,
+       Port     => $port,
+       Password => $pass,
+   );
+#   $irc->plugin_add( 'BotTraffic', POE::Component::IRC::Plugin::BotTraffic->new() );
+   $irc->plugin_add( 'BotAddressed', POE::Component::IRC::Plugin::BotAddressed->new() );
 
-    # Create a POE session for the IRC connection
-    POE::Session->create(
-        inline_states => {
-            _start            => \&bot_start,
-#            connected         => \&on_connected,
-            irc_001           => \&on_bot_001,
-            irc_disconnected  => \&bot_reconnect,
-            irc_error         => \&bot_reconnect,
-            irc_socketerr     => \&bot_reconnect,
-            irc_msg           => \&on_private_message,
-            irc_notice        => \&on_private_message,
-            irc_private       => \&on_private_message,
-            irc_public        => \&on_public_message,
-#            irc_registered    => \&on_registered,
-#            irc_shutdown      => \&on_shutdown,
-#            shutdown          => \&on_shutdown,
-            _default          => \&handle_default,
-        },
-        heap  => {
-            nid               => $nid,
-            server            => $dest,
-            irc               => $irc
-        }
-    );
-    return $irc;
+   POE::Session->create(
+       inline_states => {
+           _start            => \&bot_start,
+           autoping          => \&bot_do_autoping,
+           dns_response      => \&dns_response,
+           irc_001           => \&on_bot_001,
+#           irc_bot_action    => \&irc_bot_action,
+#           irc_bot_public    => \&irc_bot_public,
+#           irc_bot_msg       => \&irc_bot_msg,
+#           irc_bot_notice    => \&irc_bot_notice,
+#           irc_bot_addressed => \&irc_bot_addressed,
+#           irc_bot_mentioned => \&irc_bot_mentioned,
+           irc_ctcp          => \&on_ctcp,
+           irc_ctcp_action   => \&on_ctcp_action,
+           irc_ctcp_version  => \&on_ctcp_version,
+           irc_connected     => \&on_connected,
+           irc_disconnected  => \&bot_reconnect,
+           irc_error         => \&bot_reconnect,
+           irc_join          => \&on_join,
+           irc_part          => \&on_part,
+           irc_quit          => \&on_quit,
+           irc_socketerr     => \&bot_reconnect,
+           irc_snotice       => \&on_snotice,
+           irc_msg           => \&on_private_message,
+           irc_notice        => \&on_private_message,
+           irc_ping          => \&on_ping,
+           irc_plugin_del    => \&noop,
+           irc_private       => \&on_private_message,
+           irc_public        => \&on_public_message,
+           irc_registered    => \&on_registered,
+           irc_shutdown      => \&on_shutdown,
+           shutdown          => \&on_shutdown,
+           _default          => \&handle_default,
+       },
+       heap  => {
+           nid               => $nid,
+           server            => $dest,
+           irc               => $irc
+       }
+   );
+   $networks{$nid}->{irc} = $irc;
+   return $irc;
 }
 
 sub connect_all_servers {
    foreach my $server_id (keys %servers) {
       my $irc = create_irc_connection($server_id);
    }
+}
+
+######################################################
+# DNS Utilities #
+# non-blocking dns lookup
+sub send_dns_lookup {
+   my ($heap, $nid, $where, $nick, $msg) = @_;
+   my ($cmd, $type, $record) = split(' ', $msg, 3);
+   my $network = get_network_name($nid);
+
+   # Check user request first...
+   if (!defined($type) || $type eq '' ||
+       !defined($record) || $record eq '') {
+      my $irc = $heap->{irc};
+      $irc->yield(notice => $where => "Incorrect usage. Try !dns [type] [host], such as !dns a google.com");
+      print "* Incorrect usage for !dns from $nick on $network ($nid)\n";
+      return;
+   }
+
+   my $res = $dns->resolve(
+      event => 'dns_response',
+      host => $record,
+      type => $type,
+      context => {
+          where => $where,
+          nick  => $nick,
+          nid   => $nid,
+          query => "$type $record",
+          heap  => $heap
+      },
+   );
+   $poe_kernel->yield(dns_response => $res) if $res;
+   return;
+}
+
+sub dns_response {
+   my $res = $_[ARG0];
+   my @answers = map { $_->rdatastr } $res->{response}->answer() if $res->{response};
+
+   my $heap = $res->{context}->{heap};
+   my $query = $res->{context}->{query};
+   my $where = $res->{context}->{where};
+   my $nick = $res->{context}->{nick};
+   my $irc = $heap->{irc};
+
+   if ($where ne $nick) {
+      $irc->yield(privmsg => $where =>
+         "$nick: DNS query: $query => " . (@answers ? "@answers" : 'no answers'));
+   } else {
+      $irc->yield(privmsg => $nick =>
+         "DNS query: $query => " . (@answers ? "@answers" : 'no answers'));
+   }
+   return;
 }
 
 ######################################################
@@ -430,7 +825,7 @@ sub load_channels {
          nid      => $nid,
          disabled => $disabled
       };
-
+   
       # Also store channels in the %networks hash for easy access later
       $networks{$nid}{channels}{$cid} = {
          channel  => $channel,
@@ -446,21 +841,19 @@ sub join_channels {
 
    # Fetch the list of channels for the given network ID
    if (exists $networks{$nid} && exists $networks{$nid}{channels}) {
-       foreach my $cid (keys %{ $networks{$nid}{channels} }) {
-           my $channel_info = $networks{$nid}{channels}{$cid};
-           my $channel = $channel_info->{channel};
-           my $key = $channel_info->{key} || '';
-           my $sender = $_[SENDER];
-           my $irc = $sender->get_heap();
-
-           # Join the channel (implementation depends on your IRC library)
-           # Example placeholder:
-           $irc->yield(join => $channel, $key);
-           print "Joining channel $channel with key $key...\n";
-           $successes++;  # Increment successes for each channel joined
-       }
+      foreach my $cid (keys %{ $networks{$nid}{channels} }) {
+          my $channel_info = $networks{$nid}{channels}{$cid};
+          my $channel = $channel_info->{channel};
+          my $key = $channel_info->{key} || '';
+          my $sender = $_[SENDER];
+          my $heap = $_[HEAP];
+          my $irc = $networks{$nid}{irc};
+          $irc->yield(join => $channel, $key);
+          print "Joining channel $channel with key $key...\n";
+          $successes++;
+      }
    } else {
-       print "No channels found for network ID $nid.\n";
+      print "No channels found for network ID $nid.\n";
    }
 
    return $successes;
@@ -482,86 +875,86 @@ sub join_all_channels {
 # Weather Utilities #
 ###############################################################################
 sub read_wx_data {
-    my %wx_data;
+   # XXX: We should cache this for a minute or two to reduce network and disk IO at the cost of less than a few kb of ram ;)
+   my %wx_data;
 
-    # Here we read it from the local file
-    if ($config->{irc}->{wx}->{type} eq 'cache') {
-       open(my $fh, '<', $wx_file) or die "Unable to open $wx_file: $!";
+   # Here we read it from the local file
+   if ($config->{irc}->{wx}->{type} eq 'cache') {
+      open(my $fh, '<', $wx_file) or warn "Unable to open $wx_file: $!";
 
-       while (my $line = <$fh>) {
-           chomp $line;
-           my ($key, $value) = split /:\s*/, $line, 2;
-           $wx_data{$key} = $value;
-           print "read [$key]: $value\n" if ($debug >= 9);
-       }
+      while (my $line = <$fh>) {
+         chomp $line;
+         my ($key, $value) = split /:\s*/, $line, 2;
+         $wx_data{$key} = $value;
+         print "read [$key]: $value\n" if ($debug >= 9);
+      }
 
-       close $fh;
-    # Or via HTTP
-    } elsif ($config->{irc}->{wx}->{type} eq 'http') {
-       print "* Fetching WX from remote host\n";
-       my $ua = LWP::UserAgent->new;
-       $ua->agent("rustybot/$version");
-       my $wx_url = $config->{irc}->{wx}->{url};
-       my $req = HTTP::Request->new(GET => $wx_url);
-       my $res = $ua->request($req);
+      close $fh;
+   # Or via HTTP
+   } elsif ($config->{irc}->{wx}->{type} eq 'http') {
+      print "* Fetching WX from remote host\n";
+      my $ua = LWP::UserAgent->new;
+      $ua->agent("rustybot/$version");
+      my $wx_url = $config->{irc}->{wx}->{url};
+      my $req = HTTP::Request->new(GET => $wx_url);
+      my $res = $ua->request($req);
 
-       if ($res->is_success) {
-          print "  -> Success: ", $res->content, "\n" if ($debug >= 3);
-          foreach my $line (split /\R/, $res->content) {
-              chomp $line;
-              my ($key, $value) = split /:\s*/, $line, 2;
-              $wx_data{$key} = $value;
-              print "http_read [$key]: $value\n" if ($debug >= 9);
-          }
-       } else {
-          print "  -> ERROR: ", $res->status_line, "\n";
-       }
-    } else {
-       die('Invalid wx type: ' . $config->{irc}->{wx}->{type} . ", please fix config!\n");
-    }
+      if ($res->is_success) {
+         print "  -> Success: ", $res->content, "\n" if ($debug >= 3);
+         foreach my $line (split /\R/, $res->content) {
+            chomp $line;
+            my ($key, $value) = split /:\s*/, $line, 2;
+            $wx_data{$key} = $value;
+            print "http_read [$key]: $value\n" if ($debug >= 9);
+         }
+      } else {
+         print "  -> ERROR: ", $res->status_line, "\n";
+      }
+   } else {
+      die('Invalid wx type: ' . $config->{irc}->{wx}->{type} . ", please fix config!\n");
+   }
 
-    return %wx_data;
+   return %wx_data;
 }
 
 sub angle_to_direction {
-    my ($angle) = @_;
+   my ($angle) = @_;
 
-    # Define the directions and their corresponding angle ranges
-    my @directions = qw(N NNE NE ENE E ESE SE SSE S SSW SW WSW W WNW NW NNW);
+   # Define the directions and their corresponding angle ranges
+   my @directions = qw(N NNE NE ENE E ESE SE SSE S SSW SW WSW W WNW NW NNW);
 
-    # Make sure angle is within 0 to 360 degrees range
-    $angle = ($angle < 0) ? ($angle % 360) + 360 : $angle % 360;
+   # Make sure angle is within 0 to 360 degrees range
+   $angle = ($angle < 0) ? ($angle % 360) + 360 : $angle % 360;
 
-    # Calculate the index in the directions array
-    my $index = int(($angle + 11.25) / 22.5);
+   # Calculate the index in the directions array
+   my $index = int(($angle + 11.25) / 22.5);
 
-    return $directions[$index % 16];
+   return $directions[$index % 16];
 }
 
 sub wind_speed_description {
-    my ($speed) = @_;
+   my ($speed) = @_;
+   # Define the thresholds and corresponding descriptions in mph
+   my %speed_ranges = (
+      calm => [0, 1],
+      light => [1, 10],
+      moderate => [10, 20],
+      fresh => [20, 30],
+      strong => [30, 40],
+      gale => [40, 55],
+      storm => [55, 73],
+      hurricane => [73, 999]  # 999 (or any high value) represents "hurricane" category
+   );
 
-    # Define the thresholds and corresponding descriptions in mph
-    my %speed_ranges = (
-       calm => [0, 1],
-       light => [1, 10],
-       moderate => [10, 20],
-       fresh => [20, 30],
-       strong => [30, 40],
-       gale => [40, 55],
-       storm => [55, 73],
-       hurricane => [73, 999]  # 999 (or any high value) represents "hurricane" category
-    );
+   # Determine the appropriate description
+   foreach my $desc (sort { $speed_ranges{$a}[0] <=> $speed_ranges{$b}[0] } keys %speed_ranges) {
+      my ($lower, $upper) = @{$speed_ranges{$desc}};
+      if ($speed >= $lower && $speed < $upper) {
+         return $desc;
+      }
+  }
 
-    # Determine the appropriate description
-    foreach my $desc (sort { $speed_ranges{$a}[0] <=> $speed_ranges{$b}[0] } keys %speed_ranges) {
-       my ($lower, $upper) = @{$speed_ranges{$desc}};
-       if ($speed >= $lower && $speed < $upper) {
-          return $desc;
-       }
-   }
-
-   return "unknown";  # Default case (if speed doesn't match any range)
+  return "unknown";  # Default case (if speed doesn't match any range)
 }
 
 sub mph_to_knots {
@@ -617,7 +1010,7 @@ sub calculate_wind_chill {
    return $wind_chill;
 }
 
-sub get_wx_message {
+sub get_wx_msg {
    my ($heap) = @_;
    my %wx_data = read_wx_data();
    my $wx_updated = localtime->strftime('%Y-%m-%d %H:%M:%S');
@@ -635,26 +1028,35 @@ sub get_wx_message {
 
    my $wx_rain_today = $wx_data{'dailyrainin'} . " in";
    my $wx_rain_past_week = $wx_data{'weeklyrainin'} . " in";
+   my $wx_rain_month = $wx_data{'monthlyrainin'} . " in";
    my $wx_feels_like = feels_like($wx_data{'tempf'}, $wx_data{'humidity'}, $wx_data{'windspeedmph'}, $wx_data{'winddir'}) . "°F";
    my $wx_uv_index = $wx_data{'uv'};
    $wx_uv_index = 0 if ($wx_data{'uv'} eq 'Not provided');
    my $wx_solar_rad = $wx_data{'solarradiation'} . " W/m^2";
 
-   my $occupancy_msg = get_sensor_message();
-
    my $message = "🌮 At ${wx_updated}, it is ${wx_temp} with ${wx_humid} humidity."
                . " The wind is ${wx_wind_word}, ${wx_wind_direction} ${wx_wind_cardinal} at ${wx_wind_mph} (${wx_wind_knots}) with"
                . " gusts to ${wx_wind_gust_mph} (${wx_wind_gust_daily_mph} / ${wx_wind_gust_daily_knots} max today)."
-               . " There has been ${wx_rain_today} rain today, for a total of ${wx_rain_past_week} the past week."
+               . " There has been ${wx_rain_today} rain today, for a total of ${wx_rain_past_week} past week / ${wx_rain_month} past month."
                . " It feels like ${wx_feels_like} with a UV Index of ${wx_uv_index}."
-               . " Solar radiation is ${wx_solar_rad}.${occupancy_msg}";
+               . " Solar radiation is ${wx_solar_rad}.";
    return $message;
 }
 
 sub send_wx {
    my ( $target, $heap ) = @_;
-   my $message = get_wx_messsage($heap);
-   $heap->{irc}->yield(privmsg => $target => $message);
+   my $message = get_wx_msg($heap);
+   my $irc = $heap->{irc};
+
+   $irc->yield(privmsg => $target => $message);
+}
+
+sub send_sensors {
+   my ( $target, $heap ) = @_;
+   my $message = get_sensor_msg();
+   my $irc = $heap->{irc};
+
+   $irc->yield(privmsg => $target => $message);
 }
 
 ###############################################################################
@@ -667,13 +1069,20 @@ sub send_adsb {
 sub send_help {
    my ( $target, $heap ) = @_;
    my $irc = $heap->{irc};
-   $irc->yield(privmsg => $target => "*** HELP ***");
-#    $irc->yield(privmsg => $target => "!adsb       Spotted air traffic nearby");
+   $irc->yield(privmsg => $target => "*** HELP \$=admin, #=chan only, \@=privmsg only ***");
+   $irc->yield(privmsg => $target => "!adsb       Spotted air traffic nearby");
    $irc->yield(privmsg => $target => "!birds      Get a summary of birds heard today by BirdNET");
+   $irc->yield(privmsg => $target => "!dns        Perform a DNS query - arguments required: [type] [address]");
+   $irc->yield(privmsg => $target => "!join       Add a channel to the bot and join it (\@\$)");
+   $irc->yield(privmsg => $target => "!login      Login to the bot (\@)");
+   $irc->yield(privmsg => $target => "!logout     Logout from the bot (\@)");
+   $irc->yield(privmsg => $target => "!part       Remove a channel from the bot and part it (\@\$)");
+   $irc->yield(privmsg => $target => "!quit       Terminate the bot (\$)");
+   $irc->yield(privmsg => $target => "!reload     Reload the database (\@\$)");
+   $irc->yield(privmsg => $target => "!restart    Restart the bot (\$)");
+   $irc->yield(privmsg => $target => "!sensors    Get some sensor data from my QTH");
    $irc->yield(privmsg => $target => "!tacos      Get weather at my QTH");
-   $irc->yield(privmsg => $target => "*");
-   $irc->yield(privmsg => $target => "**** Admin Only ****");
-   $irc->yield(privmsg => $target => "!quit       Terminate the bot");
+   $irc->yield(privmsg => $target => "!users      List user accounts (\@)");
 }
 
 sub send_birds {
@@ -686,24 +1095,69 @@ sub send_birds {
    $irc->yield(privmsg => $target => $birds_msg);
 }
 
-# User Access
-sub is_privileged {
-    my ($nick, $network, $cmd) = @_;
-    # XXX: query database for privileges
-    return 0;
+sub dump_users {
+   my ($nick, $heap) = @_;
+   my $irc = $heap->{irc};
+   my $nid = $heap->{nid};
+   my $network = get_network_name($nid);
+
+   $irc->yield(notice => $nick => "* !users *");
+   foreach my $uid (keys %users) {
+      my $account = $users{$uid}->{user};
+      my $ident = $users{$uid}->{ident};
+      my $host = $users{$uid}->{host};
+      my $privs = $users{$uid}->{privileges};
+      my $disabled = "";
+      $disabled = "*DISABLED*" if ($users{$uid}->{disabled});
+      $irc->yield(notice => $nick => "* $account ($ident\@$host) - $privs $disabled");
+   }
+   $irc->yield(notice => $nick => "* End of !users *");
+   return;
+}
+
+sub add_channel {
+   my ($target, $heap, $channel, $key) = @_;
+   my $nid = $heap->{nid};
+   my $network = get_network_name($nid);
+   my $irc = $heap->{irc};
+
+   # Add into the database
+   my $query = "INSERT INTO channels (channel, nid, key) VALUES ('$channel', $nid, '$key');";
+   my $sth = $dbh->prepare($query);
+   $sth->execute();
+
+   # join it on the server
+   $irc->yield(join => $channel, $key);
+
+   # XXX: Update %channels
+}
+
+sub remove_channel {
+   my ($target, $heap, $channel, $key) = @_;
+   my $nid = $heap->{nid};
+   my $network = get_network_name($nid);
+   my $irc = $heap->{irc};
+
+   # Add into the database
+   my $query = "DELETE FROM channels WHERE channel = '$channel';";
+   my $sth = $dbh->prepare($query);
+   $sth->execute();
+
+   # part it on the server
+   $irc->yield(part => $channel);
+
+
+}
+
+sub restart {
+   my ($heap) = @_;
+   print "Restarting the bot...\n";
+   exec($^X, $0, @ARGV) or die "Couldn't exec: $!";
 }
 
 ###############################################################################
 # Start up #
 ###############################################################################
-
-# Load bot user accounts
-load_users();
-
-# Load networks and servers from database
-load_networks();
-
-# Connect to all saved servers
+reload_db();
 connect_all_servers();
-
 $poe_kernel->run();

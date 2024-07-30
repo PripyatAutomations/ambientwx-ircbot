@@ -73,11 +73,6 @@ sub load_users {
          $row->{disabled}
       );
 
-      if ($disabled) {
-         print " * skipped disabled user $user ($uid)\n";
-         next;
-      }
-
       print " - $user ($uid) is ${ident}\@${host} with privileges [$privileges]" . ($disabled ? "disabled" : "") . "\n";
 
       $users{$uid} = {
@@ -138,7 +133,7 @@ sub load_networks {
           nick => $nick
       };
 
-      # Query if there are are servers for this network and load them...
+      # Query if there are servers for this network and load them...
       load_servers($nid);
       # load channels if present
       load_channels($nid);
@@ -148,11 +143,8 @@ sub load_networks {
 sub load_servers {
    my ($nid) = @_;
 
-   # forget current servers data
-   undef %servers;
-
-   my $sth_servers = $dbh->prepare("SELECT * FROM servers WHERE nid = $nid");
-   $sth_servers->execute();
+   my $sth_servers = $dbh->prepare("SELECT * FROM servers WHERE nid = ?");
+   $sth_servers->execute($nid);
    my $servers_count = 0;
    my $network = get_network_name($nid);
 
@@ -168,21 +160,18 @@ sub load_servers {
          $row->{disabled}
       );
 
-      if ($disabled) {
-         print " - skipped server $host:$port (sid: $sid) because it is disabled\n";
-         next;
-      }
-
       print " - added server $host:$port ($sid) to network $network ($nid) " . ($pass ? "*password*" : "") . "priority $priority " . ($disabled ? "*disabled*" : "") . "\n";
 
-      $servers{$row->{sid}} = {
-         nid       => $nid,
-         host      => $host,
-         port      => $port,
-         pass      => $pass,
-         priority  => $priority,
-         tls       => $tls,
-         disabled  => $disabled
+      $servers{$sid} = {
+         nid         => $nid,
+         host        => $host,
+         port        => $port,
+         pass        => $pass,
+         priority    => $priority,
+         tls         => $tls,
+         blocked     => 0,		  # Is the server blocked out for failed connect?
+         last_tried  => -1,               # last time the server was tried, in case blocked
+         disabled    => $disabled
       };
       $servers_count++;
    }
@@ -192,6 +181,69 @@ sub load_servers {
    }
 
    return $servers_count;
+}
+
+sub connect_all_networks {
+   my %best_servers;
+
+   # Find the highest priority server for each network that isn't disabled or blocked
+   foreach my $sid (keys %servers) {
+      my $server = $servers{$sid};
+      my $nid = $server->{nid};
+      my $blocked = $server->{blocked};
+      my $last_tried = $server->{last_tried};
+      my $disabled = $server->{disabled};
+      my $network = get_network_name($nid);
+
+      # Skip this server, if it's disabled
+      if ($disabled) {
+         print "* Skipping disabled server $sid on network $network ($nid)\n";
+         next;
+      }
+
+      if (!exists $best_servers{$nid} || $best_servers{$nid}->{priority} < $server->{priority}) {
+         $best_servers{$nid} = $sid;
+      }
+   }
+
+   # Connect to the highest priority server for each network
+   foreach my $nid (keys %best_servers) {
+      if (!defined($best_servers{$nid})) {
+         print "huh? connect_all_servers bug in connect loop! bs{$nid} doesnt exist\n";
+         next;
+      }
+
+      my $sid = $best_servers{$nid};
+      if (!exists $servers{$sid}) {
+         print "* server $sid doesnt exist when trying to connect to $nid!\n";
+         next;
+      }
+
+      my $host = $servers{$sid}->{host};
+      my $port = $servers{$sid}->{port};
+      my $nid  = $servers{$sid}->{nid};
+      my $blocked = $servers{$sid}->{blocked};
+      my $last_tried = $servers{$sid}->{last_tried};
+      my $disabled = $servers{$sid}->{disabled};
+      my $network = get_network_name($nid);
+      print "network $network nid $nid sid $sid host $host port $port\n";
+
+      if (!defined($sid) || !defined($host) || !defined($port) || !defined($network) || !defined($nid)) {
+         print "invalid data!\n";
+         die "x";
+      }
+
+      print "host: $host port: $port nid: $nid disabled: $disabled network: $network\n";
+
+      if ($disabled) {
+         print "- Skipping disabled server $host:port ($sid) on network $network ($nid)\n";
+         next;
+      } else {
+         print "- Connecting to server $host:$port ($sid) for network $network ($nid)\n";
+         $servers{$sid}->{last_tried} = time();
+         my ($irc, $session) = create_irc_connection($sid);
+      }
+   }
 }
 
 sub reload_db {
@@ -213,7 +265,7 @@ sub get_uid {
 
    for my $uid (keys %users) {
       if ($users{$uid}->{user} eq $username) {
-         print "* mapped usernme $username to uid $uid" if ($debug >= 9);
+         print "* mapped usernme $username to uid $uid" if ($debug >= 5);
          return $uid;
       }
    }
@@ -221,18 +273,58 @@ sub get_uid {
    return -1;
 }
 
+sub get_nid {
+   my ($network) = @_;
+   my ($package, $filename, $line) = caller;
+
+   if (!defined($network) || $network eq '') {
+      print "get_nid($network): Invalid network name in call from $package $filename:$line\n";
+      return;
+   }
+
+   foreach my $nid (keys %networks) {
+      my $net = $networks{$nid};
+      my $net_name = $net->{network};
+      my $disabled = $net->{disabled};
+
+      if ($network eq $net_name) {
+         print "get_nid($network) from $package / $filename:$line returning $nid\n" if ($debug >= 7);
+         return $nid;
+      }
+   }
+
+   print "get_nid($network): Invalid network name in call from $package $filename:$line!\n";
+   return -2;
+}
+
 sub get_network_name {
    my ($nid) = @_;
-    
-   if (exists $networks{$nid}) {
-      return $networks{$nid}->{network};
-   } else {
+   my ($package, $filename, $line) = caller;
+
+   if (!defined($nid) || $nid < 0) {
+      $nid = '-2' if (!defined($nid));
+      print "get_network_name($nid): Invalid nid in call from $package $filename:$line\n";
+      return;
+   }
+
+   if (!exists $networks{$nid}) {
+      print "get_network_name($nid): Invalid network id in call from $package $filename:$line!\n";
       return 'Unknown Network';
    }
+
+   my $network = $networks{$nid}->{network};
+   print "get_network_name($nid) from $package / $filename:$line returning $network\n" if ($debug >= 10);
+   return $network;
 }
 
 sub get_my_nick {
    my ($nid) = @_;
+   my ($package, $filename, $line) = caller;
+
+   if (!defined($nid) || $nid < 0) {
+      print "get_my_nick: Invalid nid in call from $package $filename:$line\n";
+      return;
+   }
 
    if (exists $networks{$nid}) {
       my $nick = $networks{$nid}->{nick};
@@ -241,6 +333,30 @@ sub get_my_nick {
       print "get_my_nick: invalid nid: $nid\n";
    }
    return 'INVALIDNICK';
+}
+
+sub get_my_ident {
+   my ($nid) = @_;
+
+   if (exists $networks{$nid}) {
+      my $nick = $networks{$nid}->{ident};
+      return $nick;
+   } else {
+      print "get_my_ident: invalid nid: $nid\n";
+   }
+   return 'INVALIDIDENT';
+}
+
+sub get_my_realname {
+   my ($nid) = @_;
+
+   if (exists $networks{$nid}) {
+      my $nick = $networks{$nid}->{realname};
+      return $nick;
+   } else {
+      print "get_my_realname: invalid nid: $nid\n";
+   }
+   return '$botbrand';
 }
 
 sub get_my_irc {
@@ -264,6 +380,12 @@ sub do_login {
 
    if ($uid == -1) {
       print "*** FAILED LOGIN *** for unknown $account by $nick on $network ($nid).\n";
+      return 0;
+   }
+
+   if ($users{$uid}->{disbled}) {
+      print "*** LOGIN ATTEMPT from DISABLED account $account by $nick on $network ($nid)\n";
+      $irc->yield(notice => $nick => "Your account $account is disabled!");
       return 0;
    }
 
@@ -395,6 +517,14 @@ sub handle_default {
   return 0;
 }
 
+sub sanitize_channel_name {
+    my ($input) = @_;
+
+    # Allow only alphanumeric characters, underscores, hyphens, and hashes
+    $input =~ s/[^a-zA-Z0-9_\-#]//g;
+    return $input;
+}
+
 sub bot_start {
    my ($kernel, $heap) = @_[KERNEL, HEAP];
    my $irc = $heap->{irc};
@@ -508,12 +638,9 @@ sub on_private_message {
       send_dns_lookup($heap, $nid, $nick, $nick, $msg);
    } elsif ($msg =~ /^!help$/i) {
       send_help($nick, $heap);
-   } elsif ($msg =~ /^!join\s+(\S+)\s+(\S+)$/i) {
-      my ($chan, $key) = ($1, $2);
-      add_channel($nick, $heap, $chan, $key);
-   } elsif ($msg =~ /^!join\s+(\S+)$/i) {
-      my ($chan) = ($1);
-      add_channel($nick, $heap, $chan, '');
+   } elsif ($msg =~ /^!join\s+(\S+)\s+(\S+)(?:\s+(\S+))?$/i) {
+      my ($chan, $network, $key) = ($1, $2, $3);
+      add_channel($nick, $heap, $chan, $network, $key);
    } elsif ($msg =~ /^!login\s+(\S+)\s+(\S+)$/i) {
       my ($username, $password) = ($1, $2);
       do_login($nick, $username, $nid, $password);
@@ -522,9 +649,9 @@ sub on_private_message {
       do_login($nick, $nick, $nid, $password);
    } elsif ($msg =~ /^!logout$/i) {
       do_logout($nick);
-   } elsif ($msg =~ /^!part\s+(\S+)$/i) {
-      my ($chan) = ($1);
-      remove_channel($nick, $heap, $chan);
+   } elsif ($msg =~ /^!part\s+(\S+)\s+(\S+)$/i) {
+      my ($chan, $network) = ($1, $2);
+      remove_channel($nick, $heap, $chan, $network);
    } elsif ($msg =~ /^!quit$/i) {
       if (check_auth($nick, $nid, 'admin')) {
          print "* Got QUIT command from $nick on $network ($nid), exiting!\n";
@@ -674,12 +801,15 @@ sub noop {
 }
 
 sub create_irc_connection {
-   my ($server_id) = @_;
-   my $server = $servers{$server_id} or die "Server ID $server_id not found!";
+   my ($sid) = @_;
+   my $server = $servers{$sid} or die "Server ID $sid not found!";
    
    my $nid = $server->{nid};
    my $host = $server->{host};
    my $port = $server->{port};
+   my $tls = $server->{tls};
+   my $realname = get_my_realname($nid);
+   my $ident = get_my_ident($nid);
    my $nick = get_my_nick($nid);
    my $network = get_network_name($nid);
    my $pass = $server->{pass} || '';
@@ -691,6 +821,9 @@ sub create_irc_connection {
        Server   => $host,
        Port     => $port,
        Password => $pass,
+       ircname  => $realname,
+       Username => $ident,
+       UseSSL   => $tls
    );
 #   $irc->plugin_add( 'BotTraffic', POE::Component::IRC::Plugin::BotTraffic->new() );
    $irc->plugin_add( 'BotAddressed', POE::Component::IRC::Plugin::BotAddressed->new() );
@@ -737,12 +870,6 @@ sub create_irc_connection {
    );
    $networks{$nid}->{irc} = $irc;
    return { $irc, $session };
-}
-
-sub connect_all_servers {
-   foreach my $server_id (keys %servers) {
-      my ($irc, $session) = create_irc_connection($server_id);
-   }
 }
 
 ######################################################
@@ -820,11 +947,6 @@ sub load_channels {
          $channel_row->{disabled}
       );
 
-      if ($disabled) {
-         print " - skipping $channel ($cid) because it is disabled.\n";
-         next;
-      }
-
       print " - adding channel: $channel ($cid) " . ($key ? " [key]" : "") . "on $network_name ($nid) " . ($disabled ? "*disabled*" : "") . " \n";
 
       # Store the channel information in the %channels hash
@@ -856,6 +978,13 @@ sub join_channels {
           my $key = $channel_info->{key} || '';
           my $sender = $_[SENDER];
           my $heap = $_[HEAP];
+          my $disabled = $channel_info->{disabled};
+
+          if ($disabled) {
+             print "* join_channels skipping $channel ($cid) because it is disabled!\n";
+             next;
+          }
+
           my $irc = $networks{$nid}{irc};
           $irc->yield(join => $channel, $key);
           print "Joining channel $channel with key $key...\n";
@@ -1125,33 +1254,49 @@ sub dump_users {
 }
 
 sub add_channel {
-   my ($target, $heap, $channel, $key) = @_;
-   my $nid = $heap->{nid};
-   my $network = get_network_name($nid);
+   my ($target, $heap, $channel, $network, $key) = @_;
+
+   if (!defined($network) || !defined($channel) || $network eq '' || $channel eq '') {
+      print " invalid data in add_channel\n";
+      return;
+   }
+
+   my $nid = get_nid($network);
    my $irc = $heap->{irc};
+   my $safe_chan = sanitize_channel_name($channel);
 
    # Add into the database
-   my $query = "INSERT INTO channels (channel, nid, key) VALUES ('$channel', $nid, '$key');";
+   my $query = "INSERT INTO channels (channel, nid, key) VALUES (?, ?, ?);";
    my $sth = $dbh->prepare($query);
-   $sth->execute();
+   $sth->execute($safe_chan, $nid, $key);
 
    # join channel on the server
    $irc->yield(join => $channel, $key);
 
    # Update %channels
    load_channels($nid);
+
+   $irc->yield(notice => $target => "* Added bot to $channel on $network ($nid)");
+   print "* User $target added channel $channel on $network ($nid)!\n";
 }
 
 sub remove_channel {
    my ($target, $heap, $channel, $key) = @_;
+
+   if (!defined($network) || !defined($channel) || $network eq '' || $channel eq '') {
+      print " invalid data in add_channel\n";
+      return;
+   }
+
+   my $irc = $heap->{irc};
    my $nid = $heap->{nid};
    my $network = get_network_name($nid);
-   my $irc = $heap->{irc};
 
    # Remove from the database
-   my $query = "DELETE FROM channels WHERE channel = '$channel';";
+   my $query = "DELETE FROM channels WHERE channel = ?;";
    my $sth = $dbh->prepare($query);
-   $sth->execute();
+   my $safe_chan = sanitize_channel_name($channel);
+   $sth->execute($safe_chan);
 
    # part from channel on the server
    $irc->yield(part => $channel);
@@ -1170,5 +1315,5 @@ sub restart {
 # Start up #
 ###############################################################################
 reload_db();
-connect_all_servers();
+connect_all_networks();
 $poe_kernel->run();

@@ -1,4 +1,5 @@
 This is some crap for taking output from weather stations that report via HTTP
+and feeding home assistant data into a remote IRC bot...
 
 * HTTP
 	Protocol: AmbientWeather (eventually or WeatherUnderground)
@@ -15,3 +16,27 @@ You can tell an instance on one host to upload to another using forwarders.
 You can also configure the IRC bot to connect to a remote ambientwx-proxy.
 
 See config.example.yml
+
+
+
+# All:
+	Copy config.example.yml to ~/ambientwx.yml or ./config.yml then edit it
+
+# httpd.pl:
+	./httpd.pl &
+
+# sensors.pl:
+	sqlite3 turdbot.db < sensors.sql
+	./sensors.pl --list | less
+# Or similar - find entities you want and add to sensors.sql and rebuild the db as above
+	./sensors.pl &
+
+# bot.pl:
+	cp example.irc.sql ircbot.sql
+	sqlite3 turdbot.db < ircbot.sql
+	./bot.pl
+
+
+If all works OK with manual startup, you can startup automatically with ./startup.sh
+
+Hope it's useful!

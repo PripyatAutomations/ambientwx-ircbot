@@ -10,7 +10,7 @@
 # XXX: Ensure only one connection per network
 # XXX: Handle aliases (multiple nicknames)
 my $botbrand = "turdbot";
-my $version = "20240730.01";
+my $version = "20240730.02";
 
 # This is a possible security issue allowing uid 0 to do anything
 #  - set to 0 to disable
@@ -1145,8 +1145,6 @@ sub remove_channel {
 
    # part it on the server
    $irc->yield(part => $channel);
-
-
 }
 
 sub restart {

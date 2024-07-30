@@ -57,6 +57,8 @@ my $dbh = DBI->connect("dbi:SQLite:dbname=$database", "", "", { RaiseError => 1,
 # Database #
 ###############################################################################
 sub load_users {
+   undef %users;
+
    print "* Loading users from database....\n";
    my $sth_users = $dbh->prepare("SELECT * FROM users");
    $sth_users->execute();
@@ -115,6 +117,8 @@ sub load_alt_nicks {
 }
 
 sub load_networks {
+   undef %networks;
+
    my $sth_networks = $dbh->prepare("SELECT * FROM networks");
    $sth_networks->execute();
 
@@ -143,6 +147,9 @@ sub load_networks {
 
 sub load_servers {
    my ($nid) = @_;
+
+   # forget current servers data
+   undef %servers;
 
    my $sth_servers = $dbh->prepare("SELECT * FROM servers WHERE nid = $nid");
    $sth_servers->execute();
@@ -463,7 +470,7 @@ sub on_public_message {
    } elsif ($msg =~ /^!quit$/i) {
       if (check_auth($nick, $heap->{nid}, 'admin')) {
          print "* Got QUIT command from $nick in $channel on $network ($nid) - exiting!\n";
-         $irc->yield(shutdown => "Bot is shutting down as requested by $nick");
+         $irc->yield(shutdown => "Bot is shutting down as requested by $nick on $network ($nid)");
       } else {
          print "* Got QUIT command from $nick in $channel on $network ($nid) - ignoring due to no privileges\n";
          $irc->yield(notice => $nick => "You do not have permission to shutdown the bot!");
@@ -471,7 +478,7 @@ sub on_public_message {
    } elsif ($msg =~ /^!restart$/i) {
       if (check_auth($nick, $heap->{nid}, 'admin')) {
          print "* Got RESTART command from $nick in $channel, exiting!\n";
-         $irc->yield(shutdown => "Bot is restarting as requested by $nick");
+         $irc->yield(shutdown => "Bot is restarting as requested by $nick on $network ($nid)");
       } else {
          print "* Got RESTART command from $nick in $channel on $network ($nid) - ignoring due to no privileges\n";
          $irc->yield(notice => $nick => "You do not have permission to restart the bot!");
@@ -521,8 +528,8 @@ sub on_private_message {
    } elsif ($msg =~ /^!quit$/i) {
       if (check_auth($nick, $nid, 'admin')) {
          print "* Got QUIT command from $nick on $network ($nid), exiting!\n";
-         $irc->yield(shutdown => "Bot is shutting down");
-      } else {
+         $irc->yield(shutdown => "Bot is shutting down as requested by $nick on $network ($nid)");
+       } else {
          print "* Got QUIT command from $nick on $network ($nid) - ignoring due to no privileges\n";
          $irc->yield(notice => $nick => "You do not have permission to shutdown the bot!");
       }
@@ -537,8 +544,8 @@ sub on_private_message {
       }
    } elsif ($msg =~ /^!restart$/i) {
       if (check_auth($nick, $nid, 'admin')) {
-         print "* Got RESTART command from $nick - exiting!\n";
-         $irc->yield(shutdown => "Bot is restarting as requested by $nick");
+         print "* Got RESTART command from $nick on $network ($nid)- exiting!\n";
+         $irc->yield(shutdown => "Bot is restarting as requested by $nick on $network ($nid)");
       } else {
          print "* Got RESTART command from $nick on $network ($nid) - ignoring due to no privileges\n";
          $irc->yield(notice => $nick => "You do not have permission to restart the bot!");
@@ -688,7 +695,7 @@ sub create_irc_connection {
 #   $irc->plugin_add( 'BotTraffic', POE::Component::IRC::Plugin::BotTraffic->new() );
    $irc->plugin_add( 'BotAddressed', POE::Component::IRC::Plugin::BotAddressed->new() );
 
-   POE::Session->create(
+   my $session = POE::Session->create(
        inline_states => {
            _start            => \&bot_start,
            autoping          => \&bot_do_autoping,
@@ -729,12 +736,12 @@ sub create_irc_connection {
        }
    );
    $networks{$nid}->{irc} = $irc;
-   return $irc;
+   return { $irc, $session };
 }
 
 sub connect_all_servers {
    foreach my $server_id (keys %servers) {
-      my $irc = create_irc_connection($server_id);
+      my ($irc, $session) = create_irc_connection($server_id);
    }
 }
 
@@ -797,6 +804,8 @@ sub dns_response {
 sub load_channels {
    my ($nid) = @_;
    my $network_name = get_network_name($nid);
+
+   undef %channels;
 
    # Reload the channel list and apply it
    print "* Loading channels for network $network_name ($nid):\n";
@@ -1126,10 +1135,11 @@ sub add_channel {
    my $sth = $dbh->prepare($query);
    $sth->execute();
 
-   # join it on the server
+   # join channel on the server
    $irc->yield(join => $channel, $key);
 
-   # XXX: Update %channels
+   # Update %channels
+   load_channels($nid);
 }
 
 sub remove_channel {
@@ -1138,13 +1148,16 @@ sub remove_channel {
    my $network = get_network_name($nid);
    my $irc = $heap->{irc};
 
-   # Add into the database
+   # Remove from the database
    my $query = "DELETE FROM channels WHERE channel = '$channel';";
    my $sth = $dbh->prepare($query);
    $sth->execute();
 
-   # part it on the server
+   # part from channel on the server
    $irc->yield(part => $channel);
+
+   # Update %channels
+   load_channels($nid);
 }
 
 sub restart {

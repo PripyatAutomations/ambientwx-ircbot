@@ -1,6 +1,6 @@
 #!/bin/sh
-[ ! -f turdbot.db ] && sqlite3 turdbot.db < ircbot.sql
-[ ! -f sensors.db ] && sqlite3 sensors.db < sensors.sql
+[ ! -f turdbot.db ] && sqlite3 turdbot.db < example.irc.sql
+[ ! -f sensors.db ] && sqlite3 sensors.db < example.sensors.sql
 
 ./httpd.pl &
 ./sensors.pl &

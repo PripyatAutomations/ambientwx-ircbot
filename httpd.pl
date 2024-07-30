@@ -104,7 +104,7 @@ sub handle_report_data {
     }
 }
 
-# Parse reported MQTT messages
+# Parse reported Sensor messages
 sub handle_report_sensors {
     my ($query_params, $c) = @_;
     open(my $fh, '>', $sensors_data_file) or die("Can't open data file $sensors_data_file");
@@ -135,7 +135,7 @@ sub handle_report_sensors {
         if ($enabled) {
             my $url = $target->{url};
             my $tmp_url = create_get_url($query_params, $url);
-            print "   * Submitting MQTT blob to $fwd via GET\n";
+            print "   * Submitting SENSOR blob to $fwd via GET\n";
 
             if ($debug > 1) {
                 print "   -> GET URL: $tmp_url\n";

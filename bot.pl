@@ -17,13 +17,15 @@ use HTTP::Request;
 use LWP::UserAgent;
 use POE qw(Component::IRC);
 use Time::Piece;
-#use Linux::Inotify2;
 use YAML::XS;
 
-my $config_file = $ENV{HOME} . "/ambientwx.yml";
+my $config_file = "config.yml";
+   $config_file = $ENV{HOME} . "/ambientwx.yml" if (! -e $config_file);
+
+die("Missing configuration - place it at $config_file or ./config.yml and try again!\n") if (! -e $config_file);
 
 ########################################
-my $version = "20240728.01";
+my $version = "20240729.01";
 my $config = YAML::XS::LoadFile($config_file);
 
 # Pull out some oft used configuration values
@@ -217,17 +219,19 @@ sub handle_default {
 sub bot_start {
     print "* ENTER bot_start\n";
     my ($kernel, $heap) = @_[KERNEL, HEAP];
+    my $irc = $heap->{irc};
     my $nid = $heap->{nid};
     my $network = get_network_name($nid);
     my $nick = get_my_nick($nid);
     my $server = $heap->{server};
-    my $irc = $heap->{irc};
     $heap->{debug} = 1;
 
-    $heap->{irc}->yield(register => "all");
     print "Connecting as $nick on network: $network ($nid) via server: $server\n";
-    $heap->{irc}->yield(connect => { Nick => $nick, Server => $server });
+    $irc->yield(register => "all");
+#    $irc->yield(connect => { Nick => $nick, Server => $server });
+    $irc->yield(connect => { });
     print "* EXIT bot_start\n";
+    return;
 }
 
 sub on_public_message {
@@ -320,10 +324,13 @@ sub on_registered {
 # socket may stall, and you won't receive a disconnect notice for
 # up to several hours.
 sub on_bot_001 {
-   my ($kernel, $sender, $heap) = @_[KERNEL, SENDER, HEAP];
+#   my ($kernel, $sender, $heap) = @_[KERNEL, SENDER, HEAP];
+   my $heap = $_[HEAP];
+   my $sender = $_[SENDER];
+   my $irc = $sender->get_heap();
    my $nid = $heap->{nid};
    my $network = get_network_name($nid);
-
+ 
    print "* Connected to network $network ($nid)\n";
 #   $heap->{seen_traffic} = 1;
 #   $kernel->delay(autoping => 300);
@@ -360,7 +367,7 @@ sub create_irc_connection {
     POE::Session->create(
         inline_states => {
             _start            => \&bot_start,
-            connected         => \&on_connected,
+#            connected         => \&on_connected,
             irc_001           => \&on_bot_001,
             irc_disconnected  => \&bot_reconnect,
             irc_error         => \&bot_reconnect,
@@ -369,9 +376,9 @@ sub create_irc_connection {
             irc_notice        => \&on_private_message,
             irc_private       => \&on_private_message,
             irc_public        => \&on_public_message,
-            irc_registered    => \&on_registered,
-            irc_shutdown      => \&on_shutdown,
-            shutdown          => \&on_shutdown,
+#            irc_registered    => \&on_registered,
+#            irc_shutdown      => \&on_shutdown,
+#            shutdown          => \&on_shutdown,
             _default          => \&handle_default,
         },
         heap  => {
@@ -443,10 +450,12 @@ sub join_channels {
            my $channel_info = $networks{$nid}{channels}{$cid};
            my $channel = $channel_info->{channel};
            my $key = $channel_info->{key} || '';
+           my $sender = $_[SENDER];
+           my $irc = $sender->get_heap();
 
            # Join the channel (implementation depends on your IRC library)
            # Example placeholder:
-           # $heap->{irc}->yield(join => $channel, $key);
+           $irc->yield(join => $channel, $key);
            print "Joining channel $channel with key $key...\n";
            $successes++;  # Increment successes for each channel joined
        }

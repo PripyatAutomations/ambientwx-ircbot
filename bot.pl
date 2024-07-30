@@ -380,6 +380,7 @@ sub create_irc_connection {
             irc               => $irc
         }
     );
+    return $irc;
 }
 
 sub connect_all_servers {

@@ -114,10 +114,12 @@ sub handle_report_data {
                next;
             }
 
-            if ($res->is_success) {
-                print "    -> Success: ", $res->content, "\n";
-            } else {
-                print "    -> ERROR: ", $res->status_line, "\n";
+            if (defined($res)) {
+               if ($res->is_success) {
+                  print "    -> Success: ", $res->content, "\n";
+               } else {
+                  print "    -> ERROR: ", $res->status_line, "\n";
+               }
             }
         } else {
             print "   * Skipping $fwd (disabled)\n";

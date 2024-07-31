@@ -527,12 +527,12 @@ sub get_sensor_msg {
    }
 
    if ($occupancy_valid) {
-      my $objdet_cars   = $aggregated_counts{'cars'};
-      my $objdet_cats   = $aggregated_counts{'cats'}0;
-      my $objdet_dogs   = $aggregated_counts{'dogs'}0;
-      my $objdet_people = $aggregated_counts{'person'};
-      my $objdet_bikes  = $aggregated_counts{'bicycle'};
-      my $objdet_barks  = $aggregated_counts{'barks'};
+      my $objdet_cars   = $aggregated_counts{'cars'} || 0;
+      my $objdet_cats   = $aggregated_counts{'cats'} || 0;
+      my $objdet_dogs   = $aggregated_counts{'dogs'} || 0;
+      my $objdet_people = $aggregated_counts{'person'} || 0;
+      my $objdet_bikes  = $aggregated_counts{'bicycle'} || 0;
+      my $objdet_barks  = $aggregated_counts{'barks'} || 0;
       $occupancy_msg    = " There are ${objdet_cars} cars, ${objdet_cats} cats, ${objdet_dogs} dogs, and ${objdet_people} people with ${objdet_bikes} bikes in sight. I've heard ${objdet_barks} barks lately...🌮";
    } else {
       $occupancy_msg = " Sensor data expired.";

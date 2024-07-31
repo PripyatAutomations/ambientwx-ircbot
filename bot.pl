@@ -523,16 +523,16 @@ sub get_sensor_msg {
            my $name = $1;
            $aggregated_counts{"${name}_count"} += $sensor->{state};
            $occupancy_valid = 1;
+           printf "* agg($name)=" . $aggregated_counts{"${name}_count"} . "\n";
        }
    }
 
-   my $objdet_cars = $aggregated_counts{'cars'};
-   my $objdet_cats = $aggregated_counts{'cats'};
-   my $objdet_dogs = $aggregated_counts{'dogs'};
-   my $objdet_people = $aggregated_counts{'person'};
-   my $objdet_bikes = $aggregated_counts{'bicycle'};
-
    if ($occupancy_valid) {
+      my $objdet_cars = $aggregated_counts{'cars'};
+      my $objdet_cats = $aggregated_counts{'cats'};
+      my $objdet_dogs = $aggregated_counts{'dogs'};
+      my $objdet_people = $aggregated_counts{'person'};
+      my $objdet_bikes = $aggregated_counts{'bicycle'};
       $occupancy_msg = " There are ${objdet_cars} cars, ${objdet_cats} cats, ${objdet_dogs} dogs, and ${objdet_people} people with ${objdet_bikes} bikes in sight.🌮";
    } else {
       $occupancy_msg = " Sensor data expired.";

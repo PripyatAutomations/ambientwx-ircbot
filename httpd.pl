@@ -96,7 +96,6 @@ sub handle_report_data {
 
            my $url = $target->{url};
            my $res;
-           my $req;
 
            if ($method eq "GET") {
               my $tmp_url = create_get_url($query_params, $url);

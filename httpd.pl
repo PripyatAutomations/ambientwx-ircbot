@@ -110,11 +110,11 @@ sub handle_report_data {
               print "   * Submitting to $fwd via POST to $url\n";
               $req = HTTP::Request->net(POST => $url);
               $req->content($post_data);
-              $res = $ua->request($req);
            } else {
               print " * Invalid configuration, skipping this forwarder ($fwd)\n";
               next;
            }
+           $res = $ua->request($req);
 
            if (defined($res)) {
               if ($res->is_success) {

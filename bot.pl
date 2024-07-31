@@ -481,7 +481,7 @@ sub do_logout {
 # Sensors #
 ###############################################################################
 sub get_sensor_msg {
-   my @occupancy_types = ( 'car', 'cat', 'dog', 'person', 'bicycle' );
+   my @occupancy_types = ( 'bark', 'car', 'cat', 'dog', 'person', 'bicycle' );
    my $occupancy_valid = 0;
    my $occupancy_msg = "";
    my %aggregated_counts;
@@ -510,7 +510,6 @@ sub get_sensor_msg {
       return " *Error decoding sensor cache*";
    }
 
-  
    # Extract the sensors array from the data
    my $sensors = $data->{sensors};
 
@@ -523,17 +522,18 @@ sub get_sensor_msg {
            my $name = $1;
            $aggregated_counts{"${name}_count"} += $sensor->{state};
            $occupancy_valid = 1;
-           printf "* agg($name)=" . $aggregated_counts{"${name}_count"} . "\n";
+           printf "* agg($name)=" . $aggregated_counts{"${name}_count"} . "\n" if ($debug >= 8);
        }
    }
 
    if ($occupancy_valid) {
-      my $objdet_cars = $aggregated_counts{'cars'};
-      my $objdet_cats = $aggregated_counts{'cats'};
-      my $objdet_dogs = $aggregated_counts{'dogs'};
-      my $objdet_people = $aggregated_counts{'person'};
-      my $objdet_bikes = $aggregated_counts{'bicycle'};
-      $occupancy_msg = " There are ${objdet_cars} cars, ${objdet_cats} cats, ${objdet_dogs} dogs, and ${objdet_people} people with ${objdet_bikes} bikes in sight.🌮";
+      my $objdet_cars   = $aggregated_counts{'cars'} ? 0;
+      my $objdet_cats   = $aggregated_counts{'cats'} ? 0;
+      my $objdet_dogs   = $aggregated_counts{'dogs'} ? 0;
+      my $objdet_people = $aggregated_counts{'person'} ? 0;
+      my $objdet_bikes  = $aggregated_counts{'bicycle'} ? 0;
+      my $objdet_barks  = $aggregated_counts{'barks'} ? 0;
+      $occupancy_msg    = " There are ${objdet_cars} cars, ${objdet_cats} cats, ${objdet_dogs} dogs, and ${objdet_people} people with ${objdet_bikes} bikes in sight. I've heard ${objdet_barks} barks lately...🌮";
    } else {
       $occupancy_msg = " Sensor data expired.";
    }

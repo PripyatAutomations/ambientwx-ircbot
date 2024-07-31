@@ -121,8 +121,6 @@ sub get_home_assistant_sensors {
                # Encode the data as JSON
                my $json_data = encode_json(\%data);
 
-               # URL encode the JSON string
-               my $encoded_json = uri_escape($json_data);
                print $fh "$json_data\n";
                close $fh;
 
@@ -141,6 +139,8 @@ sub get_home_assistant_sensors {
                   my $ua = LWP::UserAgent->new;
 
                   if ($type eq 'GET') {
+                     # URL encode the JSON string
+                     my $encoded_json = uri_escape($json_data);
                      my $get_url = "${url}/?data=$encoded_json";
                      print "Using URL: $get_url\n" if ($debug >= 7);
                      my $req = HTTP::Request->new(GET => $get_url);

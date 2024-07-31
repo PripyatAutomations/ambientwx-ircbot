@@ -510,8 +510,12 @@ sub get_sensor_msg {
       return " *Error decoding sensor cache*";
    }
 
-  # Process $data and aggregate counts
-   foreach my $sensor (@$data) {
+  
+   # Extract the sensors array from the data
+   my $sensors = $data->{sensors};
+
+   # Process $sensors and aggregate counts
+   foreach my $sensor (@$sensors) {
        my $entity_id = $sensor->{entity_id};
        
        # Match pattern sensor.*_$name_count

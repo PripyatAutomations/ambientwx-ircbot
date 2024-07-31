@@ -800,7 +800,6 @@ sub on_part {
    my $nid = $heap->{nid};
    my $network = get_network_name($nid);
    my $nick = (split /!/, $who)[0];
-
    print " $where\@$network ($nid) PART $nick\n";
 }
 
@@ -1320,7 +1319,7 @@ sub add_channel {
    # Update %channels
    load_channels($nid);
 
-   $irc->yield(notice => $target => "* Added bot to $channel on $network ($nid)");
+   $irc->yield(notice => $target => "* Added bot to $channel on $network ($nid) as requested.");
    print "* User $target added channel $channel on $network ($nid)!\n";
 }
 
@@ -1341,8 +1340,8 @@ sub remove_channel {
    my $safe_chan = sanitize_channel_name($channel);
    $sth->execute($safe_chan, $nid);
 
-   # part from channel on the server
-   $irc->yield(part => $channel);
+   $irc->yield(notice => $target => "* Leaving $channel on $network ($nid) as requested.");
+   $irc->yield(part => $channel => "Leaving as requested by $target on $network ($nid)");
 
    # Update %channels
    load_channels($nid);

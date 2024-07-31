@@ -496,10 +496,7 @@ sub get_sensor_msg {
       return " *Error opening sensor cache*";
    }
 
-   open my $fh, '<', $sensor_file or {
-      print "Can't open sensor file $sensor_file: $!\n";
-      return " *Access error opening cache*";
-   }
+   open my $fh, '<', $sensor_file or warn "Can't open sensor file $sensor_file: $!\n";
 
    local $/; # Enable slurp mode
    my $json_text = <$fh>;

@@ -216,8 +216,7 @@ while (my $c = $d->accept) {
          my $query_string = $uri->query;
          my $post_data;
 
-         print " * GET $path\n";
-
+         # break up the query strip and decode it
          if ($query_string) {
             my @pairs = split(/[&?]/, $query_string);
             foreach my $pair (@pairs) {

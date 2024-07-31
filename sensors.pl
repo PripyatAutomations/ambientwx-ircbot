@@ -68,10 +68,11 @@ sub get_home_assistant_sensors {
     $req->header('Authorization' => "Bearer $ha_token");
     
     my $res = $ua->request($req);
+
     if ($res->is_success) {
         my $json = decode_json($res->content);
         
-        print "Decoded JSON: ", Dumper($json) if ($debug >= 6);
+        print "Decoded JSON: ", Dumper($json) if ($debug >= 9);
 
         # Support storing available sensor in the database, for query later with --list        
         if (ref($json) eq 'ARRAY') {
@@ -127,19 +128,43 @@ sub get_home_assistant_sensors {
 
                # Here we loop over our forwarders and send to them
                my $forwarders = $config->{sensors}->{forwarders};
-
                foreach my $name (keys %$forwarders) {
                   my $fwd = $forwarders->{$name};
-                  my $base_url = $fwd->{url};
-                  my $url = "${base_url}/?data=$encoded_json";
-                  my $ua = LWP::UserAgent->new;
-                  my $req = HTTP::Request->new(GET => $url);
-                  my $res = $ua->request($req);
 
-                  if ($res->is_success) {
-                     print "* Succesfully forwarded to $name via HTTP GET\n";
+                  if ($fwd->{disabled}) {
+                    print "* skipping disabled forwarder $name\n";
+                    next;
+                  }
+
+                  my $url = $fwd->{url};
+                  my $type = $fwd->{type};
+                  my $ua = LWP::UserAgent->new;
+
+                  if ($type eq 'GET') {
+                     my $get_url = "${url}/?data=$encoded_json";
+                     print "Using URL: $get_url\n" if ($debug >= 7);
+                     my $req = HTTP::Request->new(GET => $get_url);
+                     my $res = $ua->request($req);
+
+                     if ($res->is_success) {
+                        print "* Succesfully forwarded to $name via HTTP GET\n";
+                     } else {
+                        warn "* Failed forwarding to $name via HTTP GET: " . $res->status_line . "\n";
+                     }
+                  } elsif ($type eq 'POST') {
+                     print "Using URL: $url\n" if ($debug >= 4);
+                     my $req = HTTP::Request->new(POST => $url);
+                     $req->header('Content-Type' => 'application/json');
+                     $req->content($json_data);
+                     my $res = $ua->request($req);
+
+                     if ($res->is_success) {
+                        print "* Succesfully forwarded to $name via HTTP POST, response: " . $res->decoded_content . "\n";
+                     } else {
+                        warn "* Failed forwarding to $name via HTTP POST: " . $res->status_line . "\n";
+                     }
                   } else {
-                     warn "* Failed forwarding to $name via HTTP GET: " . $res->status_line . "\n";
+                     die("* Unsupported type $type in forwarder $name - fix your config!\n");
                   }
                }
             }

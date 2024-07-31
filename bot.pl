@@ -22,6 +22,7 @@ use Data::Dumper;
 use DBI;
 use Digest::SHA qw(sha256_hex);
 use HTTP::Request;
+use JSON;
 use LWP::UserAgent;
 use POE;
 use POE::Component::Client::DNS;

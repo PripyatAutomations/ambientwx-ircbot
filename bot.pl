@@ -518,14 +518,21 @@ sub get_sensor_msg {
        if ($entity_id =~ /^sensor\..*_(\w+)_count$/) {
            my $name = $1;
            $aggregated_counts{"${name}_count"} += $sensor->{state};
+           $occupancy_valid = 1;
        }
    }
 
-#   if ($occupancy_valid) {
-#      $occupancy_msg = " There are ${objdet_cars} cars, ${objdet_cats} cats, ${objdet_dogs} dogs, and ${objdet_people} people with ${objdet_bikes} bikes in sight.🌮";
-#   } else {
-#      $occupancy_msg = " Sensor data expired.";
-#   }
+   my $objdet_cars = $aggregated_counts{'cars'};
+   my $objdet_cats = $aggregated_counts{'cats'};
+   my $objdet_dogs = $aggregated_counts{'dogs'};
+   my $objdet_people = $aggregated_counts{'person'};
+   my $objdet_bikes = $aggregated_counts{'bicycle'};
+
+   if ($occupancy_valid) {
+      $occupancy_msg = " There are ${objdet_cars} cars, ${objdet_cats} cats, ${objdet_dogs} dogs, and ${objdet_people} people with ${objdet_bikes} bikes in sight.🌮";
+   } else {
+      $occupancy_msg = " Sensor data expired.";
+   }
    return $occupancy_msg;
 }
 

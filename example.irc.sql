@@ -6,6 +6,7 @@ drop table if exists users;
 drop table if exists channels;
 drop table if exists alerts;
 
+begin;
 create table networks (
    nid INTEGER PRIMARY KEY AUTOINCREMENT,
    network TEXT NOT NULL,
@@ -58,7 +59,9 @@ create table alerts (
    action TEXT NOT NULL,
    disabled INTEGER NOT NULL DEFAULT 0
 );
+commit;
 
+begin;
 insert into networks (nid, network, nick, ident, realname) values (0, 'EFnet', 'rustyclam', 'tacobot', 'Taco Bot');
 insert into networks (nid, network, nick, ident, realname) values (1, 'Libera', 'rustyclam', 'tacobot', 'Taco Bot');
 
@@ -69,3 +72,4 @@ insert into servers (nid, host, port) values (1, 'irc.libera.chat', 6667);
 insert into channels (channel, nid) values ('#hamradio', 0);
 #insert into channels (channel, nid) values ('#istabpeople', 0);
 insert into channels (channel, nid) values ('#tk-test', 1);
+commit;

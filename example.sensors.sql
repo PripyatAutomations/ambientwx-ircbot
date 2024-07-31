@@ -1,3 +1,5 @@
+begin;
+
 drop table if exists sensor_acl;
 drop table if exists available_sensors;
 
@@ -14,5 +16,15 @@ CREATE TABLE available_sensors (
     last_changed TEXT,
     friendly_name TEXT,
     icon TEXT,
+    state TEXT,
     device_class TEXT
 );
+
+insert into sensor_acl (sensor_name) values ('sensor.*_backpack_count');
+insert into sensor_acl (sensor_name) values ('sensor.*_bicycle_count');
+insert into sensor_acl (sensor_name) values ('sensor.*_car_count');
+insert into sensor_acl (sensor_name) values ('sensor.*_cat_count');
+insert into sensor_acl (sensor_name) values ('sensor.*_dog_count');
+insert into sensor_acl (sensor_name) values ('sensor.*_person_count');
+
+commit;

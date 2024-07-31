@@ -52,20 +52,30 @@ sub create_get_url {
 }
 
 sub handle_report_data {
-    my ($query_params, $c) = @_;
+    my ($query_params, $post_data, $c) = @_;
     open(my $fh, '>', $wx_file) or die("Can't open data file $wx_file");
     my $default_value = 'Not provided';
     my $outbuf = '';
+    my $method = "";
 
-    # Iterate over each parameter in %query_params
-    while (my ($key, $value) = each %$query_params) {
-        # Convert object references or complex types to strings
-        if (ref($value)) {
-            $value = ref($value);
-        }
-        
-        $value = $default_value if !defined $value || $value eq '';
-        $outbuf .= "$key: $value\n";
+    # GET request?
+    if (defined($query_params)) {
+       $method = "GET";
+       while (my ($key, $value) = each %$query_params) {
+          # Convert object references or complex types to strings
+          if (ref($value)) {
+             $value = ref($value);
+          }
+           
+          $value = $default_value if !defined $value || $value eq '';
+          $outbuf .= "$key: $value\n";
+       }
+    } elsif (defined($post_data)) {
+       # POST request
+       $method = "POST";
+       $outbuf = $post_data;
+    } else {
+       die "handle_report_data with unknown method (neither query_params nor post_data supplied!)\n";
     }
 
     print " = $outbuf\n" if ($debug > 1);
@@ -79,24 +89,35 @@ sub handle_report_data {
         my $enabled = $target->{enabled};
 
         if ($enabled) {
-            my $url = $target->{url};
-            my $tmp_url = create_get_url($query_params, $url);
-            print "   * Submitting to $fwd via GET\n";
-
-            if ($debug > 1) {
-                print "   -> GET URL: $tmp_url\n";
-            }
-
             # Create LWP instance and submit
             my $ua = LWP::UserAgent->new;
             $ua->agent("ambientwx-proxy.pl/$version");
-            my $req = HTTP::Request->new(GET => $tmp_url);
-            my $res = $ua->request($req);
+
+            my $url = $target->{url};
+            my $res;
+            if ($method eq "GET") {
+               my $tmp_url = create_get_url($query_params, $url);
+               print "   * Submitting to $fwd via GET\n";
+
+               if ($debug > 1) {
+                  print "   -> GET URL: $tmp_url\n";
+                }
+
+                my $req = HTTP::Request->new(GET => $tmp_url);
+            } elsif ($method eq "POST") {
+               print "   * Submitting to $fwd via POST to $url\n";
+               my $req = HTTP::Request->net(POST => $url);
+               $req->content($post_data);
+               $res = $ua->request($req);
+            } else {
+               print " * Invalid configuration, skipping this forwarder ($fwd)\n";
+               next;
+            }
 
             if ($res->is_success) {
-                print "  -> Success: ", $res->content, "\n";
+                print "    -> Success: ", $res->content, "\n";
             } else {
-                print "  -> ERROR: ", $res->status_line, "\n";
+                print "    -> ERROR: ", $res->status_line, "\n";
             }
         } else {
             print "   * Skipping $fwd (disabled)\n";
@@ -106,22 +127,26 @@ sub handle_report_data {
 
 # Parse reported Sensor messages
 sub handle_report_sensors {
-    my ($query_params, $c) = @_;
+    my ($query_params, $post_data, $c) = @_;
     open(my $fh, '>', $sensors_data_file) or die("Can't open data file $sensors_data_file");
     my $default_value = 'Not provided';
     my $outbuf = '';
 
-    # Iterate over each parameter in %query_params
-    while (my ($key, $value) = each %$query_params) {
-        # Convert object references or complex types to strings
-        if (ref($value)) {
-            $value = ref($value);
-        }
-        
-        $value = $default_value if !defined $value || $value eq '';
-        $outbuf .= "$key: $value\n";
+    if (defined($query_params)) {
+       # Iterate over each parameter in %query_params
+       while (my ($key, $value) = each %$query_params) {
+           # Convert object references or complex types to strings
+           if (ref($value)) {
+               $value = ref($value);
+           }
+           
+           $value = $default_value if !defined $value || $value eq '';
+           $outbuf .= "$key: $value\n";
+       }
+    } elsif (defined($post_data)) {
+    } else {
+       die "handle_report_sensors with unknown method (neither query_params nor post_data supplied!)\n";
     }
-
     print " = $outbuf\n" if ($debug > 1);
 
     print $fh $outbuf;
@@ -148,9 +173,9 @@ sub handle_report_sensors {
             my $res = $ua->request($req);
 
             if ($res->is_success) {
-                print "  -> Success: ", $res->content, "\n";
+                print "    -> Success: ", $res->content, "\n";
             } else {
-                print "  -> ERROR: ", $res->status_line, "\n";
+                print "    -> ERROR: ", $res->status_line, "\n";
             }
         } else {
             print "   * Skipping $fwd (disabled)\n";
@@ -168,7 +193,7 @@ while (my $c = $d->accept) {
    print "Accepted connection from $peer_address:$peer_port\n";
 
    while (my $r = $c->get_request) {
-      if ($r->method eq 'GET') {
+      if ($r->method eq 'GET') {		# handle GETs (most traffic)
          my $uri = $r->uri;
          my $path = $uri->path;
 
@@ -176,6 +201,7 @@ while (my $c = $d->accept) {
 
          my %query_params;
          my $query_string = $uri->query;
+         my $post_data;
 
          print " * GET $path\n";
 
@@ -224,9 +250,19 @@ while (my $c = $d->accept) {
             print "* Unknown path: $path\n";
             $c->send_error(RC_NOT_FOUND);
          }
-      } elsif ($r->method eq 'POST') {
-         print "* Skipping - POST handling not implemented yet\n";
-         $c->send_error(RC_METHOD_NOT_ALLOWED);
+      } elsif ($r->method eq 'POST') { 		# handle POSTs
+         my $post_data = $r->content;
+         my $path = $r->uri->path;
+
+         if ($path eq '/report/') {
+            handle_report_data(undef, $post_data, $c);
+            $c->send_status_line(200, "OK");
+         } elsif ($path eq '/report/sensors/') {
+            handle_report_sensors(undef, $post_data, $c);
+         } else {
+            print "* Unknown path: $path\n";
+            $c->send_error(RC_NOT_FOUND);
+         }
       } else {	# Not GET or POST
          $c->send_error(RC_METHOD_NOT_ALLOWED);
       }

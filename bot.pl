@@ -1317,7 +1317,7 @@ sub add_channel {
 }
 
 sub remove_channel {
-   my ($target, $heap, $channel, $key) = @_;
+   my ($target, $heap, $channel, $network) = @_;
 
    if (!defined($network) || !defined($channel) || $network eq '' || $channel eq '') {
       print " invalid data in add_channel\n";

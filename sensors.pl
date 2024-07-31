@@ -192,7 +192,6 @@ sub list_available_sensors {
 }
 
 %allowed_sensors = load_allowed_sensors();
-@sensors = get_home_assistant_sensors();
 
 if ($list) {
     list_available_sensors();
@@ -203,7 +202,7 @@ if ($list) {
 my $refresh_interval = $config->{sensors}->{refresh} || 60;
 
 while (1) {
-    get_home_assistant_sensors();
+    @sensors = get_home_assistant_sensors();
 
     foreach my $sensor (@export_sensors) {
         print "sensor: " . Dumper($sensor) . "\n";

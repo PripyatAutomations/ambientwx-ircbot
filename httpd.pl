@@ -252,13 +252,15 @@ while (my $c = $d->accept) {
                print "* No data file $sensors_data_file, sending 204 No Content\n";
                $c->send_status_line( 204, 'No data available yet, try again later' );
             } else {
-               print "* Sending current conditions\n";
+               print "* Sending current sensor data\n";
                $c->send_file_response($sensors_data_file);
             }
          } elsif ($path eq '/report/') {
+            print "* Handling wx report\n";
             $c->send_status_line(200, "OK");
             handle_report_data(\%query_params, $c);
          } elsif ($path eq '/report/sensors/') {
+            print "* Handling sensors report\n";
             $c->send_status_line(200, "OK");
             handle_report_sensors(\%query_params, $c);
          } else {
@@ -270,9 +272,11 @@ while (my $c = $d->accept) {
          my $path = $r->uri->path;
 
          if ($path eq '/report/') {
+            print "* Handling wx report (post)\n";
             $c->send_status_line(200, "OK");
             handle_report_data(undef, $post_data, $c);
          } elsif ($path eq '/report/sensors/') {
+            print "* Handling sensors report (post)\n";
             $c->send_status_line(200, "OK");
             handle_report_sensors(undef, $post_data, $c);
          } else {

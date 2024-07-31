@@ -1313,14 +1313,15 @@ sub add_channel {
    my $sth = $dbh->prepare($query);
    $sth->execute($safe_chan, $nid, $key);
 
+   $irc->yield(notice => $target => "* Added bot to $channel on $network ($nid) as requested.");
+   print "* User $target added channel $channel on $network ($nid)!\n";
+
    # join channel on the server
-   $irc->yield(join => $channel, $key);
+   $irc->yield(join => $channel, $key || '');
 
    # Update %channels
    load_channels($nid);
 
-   $irc->yield(notice => $target => "* Added bot to $channel on $network ($nid) as requested.");
-   print "* User $target added channel $channel on $network ($nid)!\n";
 }
 
 sub remove_channel {

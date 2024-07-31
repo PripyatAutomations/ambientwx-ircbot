@@ -7,11 +7,12 @@ use Data::Dumper;
 use DBI;
 use Digest::SHA qw(sha256_hex);
 use Getopt::Long;
-use JSON;
-use HTTP::Request;
 use LWP::UserAgent;
+use HTTP::Request;
+use JSON;
 use POE;
 use POE::Component::Client::DNS;
+use URI::Escape;
 use Time::Piece;
 use Time::HiRes qw(sleep);  # For high-resolution sleep
 use YAML::XS;
@@ -21,9 +22,7 @@ my $config_file = "config.yml";
 die("Missing configuration - place it at $config_file or ./config.yml and try again!\n") if (! -e $config_file);
 my $config = YAML::XS::LoadFile($config_file);
 my $debug = $config->{sensors}->{debug};
-my $save_yaml = $config->{sensors}->{save_yaml};
-my $save_yaml_file = $config->{sensors}->{yaml_file};
-my $save_txt_file = $config->{sensors}->{txt_file};
+my $save_json_file = $config->{cache}->{sensors}->{path};
 my $list = 0;
 
 GetOptions(
@@ -59,6 +58,7 @@ sub check_allowed_sensor {
     }
     return 0;
 }
+
 sub get_home_assistant_sensors {
     my $ha_url = $config->{sensors}->{hass_api_url};
     my $ha_token = $config->{sensors}->{hass_api_key};
@@ -72,7 +72,8 @@ sub get_home_assistant_sensors {
         my $json = decode_json($res->content);
         
         print "Decoded JSON: ", Dumper($json) if ($debug >= 6);
-        
+
+        # Support storing available sensor in the database, for query later with --list        
         if (ref($json) eq 'ARRAY') {
             # Prepare the insert statement
             my $sth_insert = $dbh->prepare("INSERT OR REPLACE INTO available_sensors (entity_id, last_changed, friendly_name, icon, device_class, state) VALUES (?, ?, ?, ?, ?, ?);");
@@ -84,6 +85,7 @@ sub get_home_assistant_sensors {
             $dbh->begin_work;
             
             eval {
+                # XXX: We should probably add more data, but this is probably enough to figure out which entities one wants to allow...
                 foreach my $entity (@$json) {
                     my $entity_id = $entity->{entity_id};
                     my $last_changed = $entity->{last_changed} || 0;
@@ -91,22 +93,10 @@ sub get_home_assistant_sensors {
                     my $icon = $entity->{attributes}{icon} || 'default-sensor';
                     my $device_class = $entity->{attributes}{device_class} || '';
                     my $state = $entity->{state} || 'unknown';
-
-                    # Add sensor to available_sensors table
                     $sth_insert->execute($entity_id, $last_changed, $friendly_name, $icon, $device_class, $state);
-                    
-                    # Check if the sensor is allowed and not disabled
-                    if (check_allowed_sensor($entity_id, %allowed_sensors)) {
-                        # If so, add it to the export_sensors list
-                        push @export_sensors, {
-                            entity_id => $entity_id,
-                            last_changed => $last_changed,
-                            friendly_name => $friendly_name,
-                            icon => $icon,
-                            state => $state,
-                            device_class => $device_class,
-                        };
-                    }
+
+                    # Save the entire entity state
+                    push @export_sensors, $entity if (check_allowed_sensor($entity_id, %allowed_sensors))
                 }
 
                 # Commit transaction
@@ -121,33 +111,37 @@ sub get_home_assistant_sensors {
 
             # Dump matching sensors to a file
             if (@export_sensors) {
-               if ($save_yaml) {
-                  open my $yfh, '>', $save_yaml_file or die "Could not open file for writing: $!";
-                  print $yfh YAML::XS::Dump(\@export_sensors);
-                  close $yfh;
-                  print "Matching sensors have been dumped to $save_yaml_file\n";
-               }
-
                # save to our dump file
-               open my $fh, '>', $save_txt_file or die "Couldn't open file for writing: $!";
-               foreach my $ts (@export_sensors) {
-                  my $entity = $ts->{entity_id};
-                  my $last_changed = $ts->{last_changed};
-                  my $friendly_name = $ts->{friendly_name};
-                  my $icon = $ts->{icon};
-                  my $state = $ts->{state};
-                  my $device_class = $ts->{device_class};
-                  my $idata = "[entry]\n" .
-                              "entity-id: $entity\n" .
-                              "last-changed: $last_changed\n" .
-                              "friendly-name: $friendly_name\n" .
-                              "icon: $icon\n" .
-                              "state: $state\n" .
-                              "device-class: $device_class\n" .
-                              "[!entry]\n";
-                  print $fh $idata;
-               }
+               open my $fh, '>', $save_json_file or die "Couldn't open file $save_json_file for writing: $!";
+               my %data = (
+                  sensors => \@export_sensors,
+               );
+
+               # Encode the data as JSON
+               my $json_data = encode_json(\%data);
+
+               # URL encode the JSON string
+               my $encoded_json = uri_escape($json_data);
+               print $fh "$json_data\n";
                close $fh;
+
+               # Here we loop over our forwarders and send to them
+               my $forwarders = $config->{sensors}->{forwarders};
+
+               foreach my $name (keys %$forwarders) {
+                  my $fwd = $forwarders->{$name};
+                  my $base_url = $fwd->{url};
+                  my $url = "${base_url}/?data=$encoded_json";
+                  my $ua = LWP::UserAgent->new;
+                  my $req = HTTP::Request->new(GET => $url);
+                  my $res = $ua->request($req);
+
+                  if ($res->is_success) {
+                     print "* Succesfully forwarded to $name via HTTP GET\n";
+                  } else {
+                     warn "* Failed forwarding to $name via HTTP GET: " . $res->status_line . "\n";
+                  }
+               }
             }
         } else {
             die "Expected an array reference, but got: ", ref($json);

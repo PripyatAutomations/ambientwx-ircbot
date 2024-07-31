@@ -475,6 +475,7 @@ sub do_logout {
    $users{$uid}->{current_nick} = '';
 }
 
+
 ###############################################################################
 # Sensors #
 ###############################################################################
@@ -488,10 +489,48 @@ sub get_sensor_msg {
    my $objdet_bikes = 0;
    my $occupancy_msg = "";
 
+   # Load the sensor data
+   my $sensor_file = $config->{cache}->{sensors}->{path};
+   if (! -e $sensor_file) {
+      print " Couldn't open sensor cache $sensor_file, it doesn't exist!\n";
+      return " *Error opening sensor cache*";
+   }
+
+   open my $fh, '<', $sensor_file or {
+      print "Can't open sensor file $sensor_file: $!\n";
+      return " *Access error opening cache*";
+   }
+
+   local $/; # Enable slurp mode
+   my $json_text = <$fh>;
+   close $fh;
+
+   my $json = JSON->new;
+   my $data;
+   eval {
+      $data = $json->decode($json_text);
+   };
+
+   if ($@) {
+      print "JSON decode error: $@\n";
+      return " *Error decoding sensor cache*";
+   }
+
+   # Process $data as needed
+   foreach my $sensor (@$data) {
+      print "Entity ID: $sensor->{entity_id}\n";
+      print "Last Changed: $sensor->{last_changed}\n";
+      print "Friendly Name: $sensor->{friendly_name}\n";
+      print "Icon: $sensor->{icon}\n";
+      print "Device Class: $sensor->{device_class}\n";
+      print "State: $sensor->{state}\n";
+      print "-----------------------\n";
+   }
+
    if ($occupancy_valid) {
       $occupancy_msg = " There are ${objdet_cars} cars, ${objdet_cats} cats, ${objdet_dogs} dogs, and ${objdet_people} people with ${objdet_bikes} bikes in sight.🌮";
    } else {
-      $occupancy_msg = " Occupancy data expired.";
+      $occupancy_msg = " Sensor data expired.";
    }
    return $occupancy_msg;
 }

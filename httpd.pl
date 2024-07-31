@@ -89,41 +89,44 @@ sub handle_report_data {
         my $enabled = $target->{enabled};
 
         if ($enabled) {
-            # Create LWP instance and submit
-            my $ua = LWP::UserAgent->new;
-            $ua->agent("ambientwx-proxy.pl/$version");
+           my $req;
+           # Create LWP instance and submit
+           my $ua = LWP::UserAgent->new;
+           $ua->agent("ambientwx-proxy.pl/$version");
 
-            my $url = $target->{url};
-            my $res;
-            if ($method eq "GET") {
-               my $tmp_url = create_get_url($query_params, $url);
-               print "   * Submitting to $fwd via GET\n";
+           my $url = $target->{url};
+           my $res;
+           my $req;
 
-               if ($debug > 1) {
-                  print "   -> GET URL: $tmp_url\n";
-                }
+           if ($method eq "GET") {
+              my $tmp_url = create_get_url($query_params, $url);
+              print "   * Submitting to $fwd via GET\n";
 
-                my $req = HTTP::Request->new(GET => $tmp_url);
-            } elsif ($method eq "POST") {
-               print "   * Submitting to $fwd via POST to $url\n";
-               my $req = HTTP::Request->net(POST => $url);
-               $req->content($post_data);
-               $res = $ua->request($req);
-            } else {
-               print " * Invalid configuration, skipping this forwarder ($fwd)\n";
-               next;
-            }
-
-            if (defined($res)) {
-               if ($res->is_success) {
-                  print "    -> Success: ", $res->content, "\n";
-               } else {
-                  print "    -> ERROR: ", $res->status_line, "\n";
+              if ($debug > 1) {
+                 print "   -> GET URL: $tmp_url\n";
                }
-            }
-        } else {
-            print "   * Skipping $fwd (disabled)\n";
-        }
+
+               $req = HTTP::Request->new(GET => $tmp_url);
+           } elsif ($method eq "POST") {
+              print "   * Submitting to $fwd via POST to $url\n";
+              $req = HTTP::Request->net(POST => $url);
+              $req->content($post_data);
+              $res = $ua->request($req);
+           } else {
+              print " * Invalid configuration, skipping this forwarder ($fwd)\n";
+              next;
+           }
+
+           if (defined($res)) {
+              if ($res->is_success) {
+                 print "    -> Success: ", $res->content, "\n";
+              } else {
+                 print "    -> ERROR: ", $res->status_line, "\n";
+              }
+           }
+       } else {
+           print "   * Skipping $fwd (disabled)\n";
+       }
     }
 }
 
@@ -135,17 +138,9 @@ sub handle_report_sensors {
     my $outbuf = '';
 
     if (defined($query_params)) {
-       # Iterate over each parameter in %query_params
-       while (my ($key, $value) = each %$query_params) {
-           # Convert object references or complex types to strings
-           if (ref($value)) {
-               $value = ref($value);
-           }
-           
-           $value = $default_value if !defined $value || $value eq '';
-           $outbuf .= "$key: $value\n";
-       }
+       $outbuf = uri_unescape($query_params->{data});
     } elsif (defined($post_data)) {
+       $outbuf = $post_data;
     } else {
        die "handle_report_sensors with unknown method (neither query_params nor post_data supplied!)\n";
     }
@@ -161,17 +156,34 @@ sub handle_report_sensors {
 
         if ($enabled) {
             my $url = $target->{url};
-            my $tmp_url = create_get_url($query_params, $url);
-            print "   * Submitting SENSOR blob to $fwd via GET\n";
-
-            if ($debug > 1) {
-                print "   -> GET URL: $tmp_url\n";
-            }
+            my $method = $target->{type};
 
             # Create LWP instance and submit
             my $ua = LWP::UserAgent->new;
             $ua->agent("ambientwx-proxy.pl/$version");
-            my $req = HTTP::Request->new(GET => $tmp_url);
+
+            my $req;
+            if ($method eq 'GET') {
+               my $tmp_url = create_get_url($query_params, $url);
+               print "   * Submitting SENSOR blob to $fwd via GET\n";
+
+               if ($debug > 1) {
+                   print "   -> GET URL: $tmp_url\n";
+               }
+
+               $req = HTTP::Request->new(GET => $tmp_url);
+            } elsif ($method eq 'POST') {
+               my $tmp_url = create_get_url($query_params, $url);
+               print "   * Submitting SENSOR blob to $fwd via POST\n";
+
+               if ($debug > 1) {
+                   print "   -> POST URL: $tmp_url\n";
+               }
+
+               $req = HTTP::Request->new(POST => $tmp_url);
+               $req->content($post_data);
+            }
+
             my $res = $ua->request($req);
 
             if ($res->is_success) {
@@ -232,6 +244,7 @@ while (my $c = $d->accept) {
                $c->send_status_line( 204, 'No data available yet, try again later' );
             } else {
                print "* Sending current conditions\n";
+               $c->send_status_line(200, "OK");
                $c->send_file_response($wx_file);
             }
          } elsif ($path eq '/current/sensors/') {
@@ -244,9 +257,10 @@ while (my $c = $d->accept) {
                $c->send_file_response($sensors_data_file);
             }
          } elsif ($path eq '/report/') {
-            handle_report_data(\%query_params, $c);
             $c->send_status_line(200, "OK");
+            handle_report_data(\%query_params, $c);
          } elsif ($path eq '/report/sensors/') {
+            $c->send_status_line(200, "OK");
             handle_report_sensors(\%query_params, $c);
          } else {
             print "* Unknown path: $path\n";
@@ -257,9 +271,10 @@ while (my $c = $d->accept) {
          my $path = $r->uri->path;
 
          if ($path eq '/report/') {
-            handle_report_data(undef, $post_data, $c);
             $c->send_status_line(200, "OK");
+            handle_report_data(undef, $post_data, $c);
          } elsif ($path eq '/report/sensors/') {
+            $c->send_status_line(200, "OK");
             handle_report_sensors(undef, $post_data, $c);
          } else {
             print "* Unknown path: $path\n";

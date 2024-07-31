@@ -483,12 +483,8 @@ sub do_logout {
 sub get_sensor_msg {
    my @occupancy_types = ( 'car', 'cat', 'dog', 'person', 'bicycle' );
    my $occupancy_valid = 0;
-   my $objdet_cars = 0;
-   my $objdet_cats = 0;
-   my $objdet_dogs = 0;
-   my $objdet_people = 0;
-   my $objdet_bikes = 0;
    my $occupancy_msg = "";
+   my %aggregated_counts;
 
    # Load the sensor data
    my $sensor_file = $config->{cache}->{sensors}->{path};
@@ -514,22 +510,22 @@ sub get_sensor_msg {
       return " *Error decoding sensor cache*";
    }
 
-   # Process $data as needed
+  # Process $data and aggregate counts
    foreach my $sensor (@$data) {
-      print "Entity ID: $sensor->{entity_id}\n";
-      print "Last Changed: $sensor->{last_changed}\n";
-      print "Friendly Name: $sensor->{friendly_name}\n";
-      print "Icon: $sensor->{icon}\n";
-      print "Device Class: $sensor->{device_class}\n";
-      print "State: $sensor->{state}\n";
-      print "-----------------------\n";
+       my $entity_id = $sensor->{entity_id};
+       
+       # Match pattern sensor.*_$name_count
+       if ($entity_id =~ /^sensor\..*_(\w+)_count$/) {
+           my $name = $1;
+           $aggregated_counts{"${name}_count"} += $sensor->{state};
+       }
    }
 
-   if ($occupancy_valid) {
-      $occupancy_msg = " There are ${objdet_cars} cars, ${objdet_cats} cats, ${objdet_dogs} dogs, and ${objdet_people} people with ${objdet_bikes} bikes in sight.🌮";
-   } else {
-      $occupancy_msg = " Sensor data expired.";
-   }
+#   if ($occupancy_valid) {
+#      $occupancy_msg = " There are ${objdet_cars} cars, ${objdet_cats} cats, ${objdet_dogs} dogs, and ${objdet_people} people with ${objdet_bikes} bikes in sight.🌮";
+#   } else {
+#      $occupancy_msg = " Sensor data expired.";
+#   }
    return $occupancy_msg;
 }
 
@@ -1326,14 +1322,13 @@ sub remove_channel {
    }
 
    my $irc = $heap->{irc};
-   my $nid = $heap->{nid};
-   my $network = get_network_name($nid);
+   my $nid = get_nid($network);
 
    # Remove from the database
-   my $query = "DELETE FROM channels WHERE channel = ?;";
+   my $query = "DELETE FROM channels WHERE channel = ? and nid = ?;";
    my $sth = $dbh->prepare($query);
    my $safe_chan = sanitize_channel_name($channel);
-   $sth->execute($safe_chan);
+   $sth->execute($safe_chan, $nid);
 
    # part from channel on the server
    $irc->yield(part => $channel);

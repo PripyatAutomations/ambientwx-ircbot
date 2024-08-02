@@ -10,7 +10,7 @@
 # XXX: Ensure only one connection per network
 # XXX: Handle aliases (multiple nicknames)
 my $botbrand = "turdbot";
-my $version = "20240730.02";
+my $version = "20240802.01";
 
 # This is a possible security issue allowing uid 0 to do anything
 #  - set to 0 to disable
@@ -30,6 +30,7 @@ use POE::Component::IRC;
 #use POE::Component::IRC::Plugin::BotTraffic;
 use POE::Component::IRC::Plugin::BotAddressed;
 #use POE::Component::IRC::Plugin::Console
+use Time::Seconds;
 use Time::Piece;
 use YAML::XS;
 
@@ -40,6 +41,7 @@ my %networks;
 my %servers;
 my %users;
 my %channels;
+my $started = time;
 
 # Try to find our config file...
 my $config_file = "config.yml";
@@ -373,9 +375,9 @@ sub get_my_irc {
 }
 
 sub do_login {
-   my ($nick, $account,$nid, $password) = @_;
+   my ($heap, $nick, $account,$nid, $password) = @_;
    my $network = get_network_name($nid);
-   my $irc = get_my_irc($nid);
+   my $irc = $heap->{irc};
    my $uid = get_uid($account);
    my $user = get_username($uid);
 
@@ -661,6 +663,8 @@ sub on_public_message {
       send_sensors($channel, $heap);
    } elsif ($msg =~ /^!tacos$/i) {
       send_wx($channel, $heap);
+   } elsif ($msg =~ /^!uptime$/i) {
+      send_uptime($heap, $nick, $nick);
    }
 }
 
@@ -687,10 +691,10 @@ sub on_private_message {
       add_channel($nick, $heap, $chan, $network, $key);
    } elsif ($msg =~ /^!login\s+(\S+)\s+(\S+)$/i) {
       my ($username, $password) = ($1, $2);
-      do_login($nick, $username, $nid, $password);
+      do_login($heap, $nick, $username, $nid, $password);
    } elsif ($msg =~ /^!login\s+(\S+)$/i) {		# short form, if nick == username
       my ($password) = ($1);
-      do_login($nick, $nick, $nid, $password);
+      do_login($heap, $nick, $nick, $nid, $password);
    } elsif ($msg =~ /^!logout$/i) {
       do_logout($nick);
    } elsif ($msg =~ /^!part\s+(\S+)\s+(\S+)$/i) {
@@ -725,6 +729,8 @@ sub on_private_message {
       send_sensors($nick, $heap);
    } elsif ($msg =~ /^!tacos$/i) {
       send_wx($nick, $heap);
+   } elsif ($msg =~ /^!uptime$/i) {
+      send_uptime($heap, $nick, $nick);
    } elsif ($msg =~ /^!users$/i) {
       dump_users($nick, $heap);
    }
@@ -1263,6 +1269,7 @@ sub send_help {
    $irc->yield(privmsg => $target => "!restart    Restart the bot (\$)");
    $irc->yield(privmsg => $target => "!sensors    Get some sensor data from my QTH");
    $irc->yield(privmsg => $target => "!tacos      Get weather at my QTH");
+   $irc->yield(privmsg => $target => "!uptime     Display bot uptime");
    $irc->yield(privmsg => $target => "!users      List user accounts (\@)");
 }
 
@@ -1293,6 +1300,27 @@ sub dump_users {
       $irc->yield(notice => $nick => "* $account ($ident\@$host) - $privs $disabled");
    }
    $irc->yield(notice => $nick => "* End of !users *");
+   return;
+}
+
+sub send_uptime {
+   my ($heap, $target, $nick) = @_;
+   my $irc = $heap->{irc};
+   my $nid = $heap->{nid};
+   my $network = get_network_name($nid);
+   my $now = time;
+   my $delta = $now - $started;
+   my $seconds = $delta;
+
+   my $days = int($seconds / ONE_DAY);
+   $seconds %= ONE_DAY;
+   my $hours = int($seconds / ONE_HOUR);
+   $seconds %= ONE_HOUR;
+   my $minutes = int($seconds / ONE_MINUTE);
+   $seconds %= ONE_MINUTE;
+   my $str = printf("%d days, %02d:%02d:%02d", $days, $hours, $minutes, $seconds);
+
+   $irc->yield(privmsg => $target => "uptime: $str");
    return;
 }
 

@@ -1224,7 +1224,7 @@ sub get_wx_msg {
    my $wx_rain_past_week = $wx_data{'weeklyrainin'} . " in";
    my $wx_rain_month = $wx_data{'monthlyrainin'} . " in";
    my $wx_feels_like = feels_like($wx_data{'tempf'}, $wx_data{'humidity'}, $wx_data{'windspeedmph'}, $wx_data{'winddir'}) . "°F";
-   my $wx_feels_like_c = degF_to_degC($wx_data{'tempf'}) . . "°C";
+   my $wx_feels_like_c = degF_to_degC($wx_data{'tempf'}) . "°C";
    my $wx_uv_index = $wx_data{'uv'};
    $wx_uv_index = 0 if ($wx_data{'uv'} eq 'Not provided');
    my $wx_solar_rad = $wx_data{'solarradiation'} . " W/m^2";

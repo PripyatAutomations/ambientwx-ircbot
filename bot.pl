@@ -1236,7 +1236,7 @@ sub get_wx_msg {
 
    my $wx_rain_today = sprintf("%.2f in.", $wx_data{'dailyrainin'});
    my $wx_rain_past_week = sprintf("%0.2f in.", $wx_data{'weeklyrainin'});;
-   my $wx_rain_month = spritnf("%0.2f in.", $wx_data{'monthlyrainin'});
+   my $wx_rain_month = sprintf("%0.2f in.", $wx_data{'monthlyrainin'});
    my $wx_feels_like = feels_like($wx_data{'tempf'}, $wx_data{'humidity'}, $wx_data{'windspeedmph'}, $wx_data{'winddir'}) . "°F";
    my $wx_feels_like_c = degF_to_degC($wx_data{'tempf'}) . "°C";
    my $wx_uv_index = $wx_data{'uv'};

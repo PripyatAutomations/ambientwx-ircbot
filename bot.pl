@@ -1318,7 +1318,7 @@ sub send_uptime {
    $seconds %= ONE_HOUR;
    my $minutes = int($seconds / ONE_MINUTE);
    $seconds %= ONE_MINUTE;
-   my $str = printf("%d days, %02d:%02d:%02d", $days, $hours, $minutes, $seconds);
+   my $str = sprintf("%d days, %02d:%02d:%02d", $days, $hours, $minutes, $seconds);
 
    $irc->yield(privmsg => $target => "uptime: $str");
    return;

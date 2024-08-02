@@ -1147,7 +1147,9 @@ sub wind_speed_description {
 sub mph_to_knots {
    my ($mph) = @_;
    my $knots = $mph * 0.868976;  # Conversion factor from mph to knots
-   return sprintf("%.2f", $knots);  # Round to 2 decimal places
+   my $ret = sprintf("%.2f", $knots);  # Round to 2 decimal places
+   $ret =~ s/\.0$//;
+   return $ret
 }
 
 sub feels_like {
@@ -1173,7 +1175,9 @@ sub feels_like {
       # For simplicity, we'll just use the temperature itself as the feels like temperature.
    }
 
-   return sprintf("%.1f", $feels_like_temperature);
+   my $feels_like = sprintf("%.1f", $feels_like_temperature);
+   $feels_like =~ s/\.0$//;
+   return $feels_like
 }
 
 sub calculate_heat_index {
@@ -1200,13 +1204,17 @@ sub calculate_wind_chill {
 sub degC_to_degF {
     my ($degC) = @_;
     my $degF = ($degC * 9/5) + 32;
-    return $degF;
+    my $ret = sprintf("%.1f", $degF);
+    $ret =~ s/\.0$//;
+    return $ret;
 }
 
 sub degF_to_degC {
     my ($degF) = @_;
     my $degC = ($degF - 32) * 5/9;
-    return $degC;
+    my $ret = sprintf("%.1f", $degC);
+    $ret =~ s/\.0$//;
+    return $ret;
 }
 
 sub get_wx_msg {
@@ -1219,7 +1227,7 @@ sub get_wx_msg {
 
    my $wx_wind_direction = $wx_data{'winddir'} . "°";
    my $wx_wind_cardinal = angle_to_direction($wx_data{'winddir'});
-   my $wx_wind_mph = $wx_data{'windspeedmph'} . " MPH";
+   my $wx_wind_mph = sprintf("%f MPH", $wx_data{'windspeedmph'});
    my $wx_wind_knots = mph_to_knots($wx_data{'windspeedmph'}) . " Kts";
    my $wx_wind_gust_mph = $wx_data{'windgustmph'} . " MPH";
    my $wx_wind_gust_daily_mph = $wx_data{'maxdailygust'} . " MPH";

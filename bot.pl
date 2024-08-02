@@ -1197,11 +1197,18 @@ sub calculate_wind_chill {
    return $wind_chill;
 }
 
+sub degC_to_degF {
+    my ($degC) = @_;
+    my $degF = ($degC * 9/5) + 32;
+    return $degF;
+}
+
 sub get_wx_msg {
    my ($heap) = @_;
    my %wx_data = read_wx_data();
    my $wx_updated = localtime->strftime('%Y-%m-%d %H:%M:%S');
    my $wx_temp = $wx_data{'tempf'} . "°F";
+   my $wx_temp_c = degF_to_degC($wx_data{'tempf'}) . "°C";
    my $wx_humid = $wx_data{'humidity'} . "%";
 
    my $wx_wind_direction = $wx_data{'winddir'} . "°";
@@ -1217,15 +1224,16 @@ sub get_wx_msg {
    my $wx_rain_past_week = $wx_data{'weeklyrainin'} . " in";
    my $wx_rain_month = $wx_data{'monthlyrainin'} . " in";
    my $wx_feels_like = feels_like($wx_data{'tempf'}, $wx_data{'humidity'}, $wx_data{'windspeedmph'}, $wx_data{'winddir'}) . "°F";
+   my $wx_feels_like_c = degF_to_degC($wx_data{'tempf'}) . . "°C";
    my $wx_uv_index = $wx_data{'uv'};
    $wx_uv_index = 0 if ($wx_data{'uv'} eq 'Not provided');
    my $wx_solar_rad = $wx_data{'solarradiation'} . " W/m^2";
 
-   my $message = "🌮 At ${wx_updated}, it is ${wx_temp} with ${wx_humid} humidity."
+   my $message = "🌮 At ${wx_updated}, it is ${wx_temp} (${wx_temp_c}) with ${wx_humid} humidity."
                . " The wind is ${wx_wind_word}, ${wx_wind_direction} ${wx_wind_cardinal} at ${wx_wind_mph} (${wx_wind_knots}) with"
                . " gusts to ${wx_wind_gust_mph} (${wx_wind_gust_daily_mph} / ${wx_wind_gust_daily_knots} max today)."
                . " There has been ${wx_rain_today} rain today, for a total of ${wx_rain_past_week} past week / ${wx_rain_month} past month."
-               . " It feels like ${wx_feels_like} with a UV Index of ${wx_uv_index}."
+               . " It feels like ${wx_feels_like} (${wx_feels_like_c}) with a UV Index of ${wx_uv_index}."
                . " Solar radiation is ${wx_solar_rad}.";
    return $message;
 }

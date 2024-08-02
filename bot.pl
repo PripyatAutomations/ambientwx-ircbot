@@ -1316,7 +1316,7 @@ sub dump_users {
       my $account = $users{$uid}->{user};
       my $ident = $users{$uid}->{ident};
       my $host = $users{$uid}->{host};
-      my $privs = $users{$uid}->{privileges};
+      my $privs = $users{$uid}->{privileges} || 'unprivileged';
       my $disabled = "";
       $disabled = " *DISABLED*" if ($users{$uid}->{disabled});
       my $loggedin = "";
@@ -1324,7 +1324,7 @@ sub dump_users {
       if ($users{$uid}->{logged_in}) {
          $loggedin = " logged in as $uname";
       }
-      $irc->yield(notice => $nick => "* $account ($ident\@$host) - $privs$loggedin$disabled");
+      $irc->yield(notice => $nick => "* $account ($ident\@$host) - [$privs]$loggedin$disabled");
    }
    $irc->yield(notice => $nick => "* End of !users *");
    return;

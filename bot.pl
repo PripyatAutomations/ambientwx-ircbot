@@ -1203,6 +1203,12 @@ sub degC_to_degF {
     return $degF;
 }
 
+sub degF_to_degC {
+    my ($degF) = @_;
+    my $degC = ($degF - 32) * 5/9;
+    return $degC;
+}
+
 sub get_wx_msg {
    my ($heap) = @_;
    my %wx_data = read_wx_data();

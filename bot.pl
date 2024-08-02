@@ -1227,16 +1227,16 @@ sub get_wx_msg {
 
    my $wx_wind_direction = $wx_data{'winddir'} . "°";
    my $wx_wind_cardinal = angle_to_direction($wx_data{'winddir'});
-   my $wx_wind_mph = sprintf("%f MPH", $wx_data{'windspeedmph'});
-   my $wx_wind_knots = mph_to_knots($wx_data{'windspeedmph'}) . " Kts";
-   my $wx_wind_gust_mph = $wx_data{'windgustmph'} . " MPH";
-   my $wx_wind_gust_daily_mph = $wx_data{'maxdailygust'} . " MPH";
-   my $wx_wind_gust_daily_knots = mph_to_knots($wx_data{'maxdailygust'}) . " Kts";
+   my $wx_wind_mph = sprintf("%.1f", $wx_data{'windspeedmph'});
+   my $wx_wind_knots = mph_to_knots($wx_data{'windspeedmph'})
+   my $wx_wind_gust_mph = sprintf("%.1f", $wx_data{'windgustmph'});
+   my $wx_wind_gust_daily_mph = sprintf("%1.f", $wx_data{'maxdailygust'});
+   my $wx_wind_gust_daily_knots = mph_to_knots($wx_data{'maxdailygust'});
    my $wx_wind_word = wind_speed_description($wx_data{'windspeedmph'});
 
-   my $wx_rain_today = $wx_data{'dailyrainin'} . " in";
-   my $wx_rain_past_week = $wx_data{'weeklyrainin'} . " in";
-   my $wx_rain_month = $wx_data{'monthlyrainin'} . " in";
+   my $wx_rain_today = sprintf("%.2f in.", $wx_data{'dailyrainin'});
+   my $wx_rain_past_week = sprintf("%0.2f in.", $wx_data{'weeklyrainin'});;
+   my $wx_rain_month = spritnf("%0.2f in.", $wx_data{'monthlyrainin'});
    my $wx_feels_like = feels_like($wx_data{'tempf'}, $wx_data{'humidity'}, $wx_data{'windspeedmph'}, $wx_data{'winddir'}) . "°F";
    my $wx_feels_like_c = degF_to_degC($wx_data{'tempf'}) . "°C";
    my $wx_uv_index = $wx_data{'uv'};
@@ -1244,11 +1244,11 @@ sub get_wx_msg {
    my $wx_solar_rad = $wx_data{'solarradiation'} . " W/m^2";
 
    my $message = "🌮 At ${wx_updated}, it is ${wx_temp} (${wx_temp_c}) with ${wx_humid} humidity."
-               . " The wind is ${wx_wind_word}, ${wx_wind_direction} ${wx_wind_cardinal} at ${wx_wind_mph} (${wx_wind_knots}) with"
-               . " gusts to ${wx_wind_gust_mph} (${wx_wind_gust_daily_mph} / ${wx_wind_gust_daily_knots} max today)."
-               . " There has been ${wx_rain_today} rain today, for a total of ${wx_rain_past_week} past week / ${wx_rain_month} past month."
+               . " The wind is ${wx_wind_word}, ${wx_wind_direction} ${wx_wind_cardinal} at ${wx_wind_mph} (${wx_wind_knots} Kts) with"
+               . " gusts to ${wx_wind_gust_mph} MPH (${wx_wind_gust_daily_mph} MPH / ${wx_wind_gust_daily_knots} Kts max today)."
+               . " There has been ${wx_rain_today} rain today, for a total of ${wx_rain_past_week} this week / ${wx_rain_month} this month."
                . " It feels like ${wx_feels_like} (${wx_feels_like_c}) with a UV Index of ${wx_uv_index}."
-               . " Solar radiation is ${wx_solar_rad}.";
+              . " Solar radiation is ${wx_solar_rad}.";
    return $message;
 }
 

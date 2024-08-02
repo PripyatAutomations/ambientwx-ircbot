@@ -1228,7 +1228,7 @@ sub get_wx_msg {
    my $wx_wind_direction = $wx_data{'winddir'} . "°";
    my $wx_wind_cardinal = angle_to_direction($wx_data{'winddir'});
    my $wx_wind_mph = sprintf("%.1f", $wx_data{'windspeedmph'});
-   my $wx_wind_knots = mph_to_knots($wx_data{'windspeedmph'})
+   my $wx_wind_knots = mph_to_knots($wx_data{'windspeedmph'});
    my $wx_wind_gust_mph = sprintf("%.1f", $wx_data{'windgustmph'});
    my $wx_wind_gust_daily_mph = sprintf("%1.f", $wx_data{'maxdailygust'});
    my $wx_wind_gust_daily_knots = mph_to_knots($wx_data{'maxdailygust'});

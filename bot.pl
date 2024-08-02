@@ -664,7 +664,7 @@ sub on_public_message {
    } elsif ($msg =~ /^!tacos$/i) {
       send_wx($channel, $heap);
    } elsif ($msg =~ /^!uptime$/i) {
-      send_uptime($heap, $nick, $nick);
+      send_uptime($channel, $nick, $heap);
    }
 }
 
@@ -730,7 +730,7 @@ sub on_private_message {
    } elsif ($msg =~ /^!tacos$/i) {
       send_wx($nick, $heap);
    } elsif ($msg =~ /^!uptime$/i) {
-      send_uptime($heap, $nick, $nick);
+      send_uptime($nick, $nick, $heap);
    } elsif ($msg =~ /^!users$/i) {
       dump_users($nick, $heap);
    }
@@ -1304,7 +1304,7 @@ sub dump_users {
 }
 
 sub send_uptime {
-   my ($heap, $target, $nick) = @_;
+   my ($target, $nick, $heap) = @_;
    my $irc = $heap->{irc};
    my $nid = $heap->{nid};
    my $network = get_network_name($nid);

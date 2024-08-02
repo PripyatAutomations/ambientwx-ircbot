@@ -1318,8 +1318,13 @@ sub dump_users {
       my $host = $users{$uid}->{host};
       my $privs = $users{$uid}->{privileges};
       my $disabled = "";
-      $disabled = "*DISABLED*" if ($users{$uid}->{disabled});
-      $irc->yield(notice => $nick => "* $account ($ident\@$host) - $privs $disabled");
+      $disabled = " *DISABLED*" if ($users{$uid}->{disabled});
+      my $loggedin = "";
+      my $uname = $users{$uid}->{current_nick};
+      if ($users{$uid}->{logged_in}) {
+         $loggedin = " logged in as $uname";
+      }
+      $irc->yield(notice => $nick => "* $account ($ident\@$host) - $privs$loggedin$disabled");
    }
    $irc->yield(notice => $nick => "* End of !users *");
    return;

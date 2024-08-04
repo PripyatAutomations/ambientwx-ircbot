@@ -24,6 +24,7 @@ use Digest::SHA qw(sha256_hex);
 use HTTP::Request;
 use JSON;
 use LWP::UserAgent;
+use Math::Units;
 use POE;
 use POE::Component::Client::DNS;
 use POE::Component::IRC;
@@ -630,15 +631,27 @@ sub on_public_message {
    my $network = get_network_name($nid);
    my $channel = $where->[0];
    my $server = $heap->{server};
-   my $sender = "$nick\@$server/$channel";
+   my $sender = "[$network] $channel <$nick>";
    my $irc = $heap->{irc};
 
    print "[$sender] $msg\n";
+
+   my $cmd;
+   my @args;
+
+   if ($msg =~ /^!(\w+)\s+(.*)$/) {
+      $cmd = $1;
+      my @args = split(/\s+/, $2);
+   } else {
+      print "xxx\n";
+   }
 
    if ($msg =~ /^!adsb$/i) {
       send_adsb($channel, $heap);
    } elsif ($msg =~ /^!birds$/i) {
       send_birds($channel, $heap);
+   } elsif ($msg =~ /^!convert$/i) {
+      print "$cmd\n";
    } elsif ($msg =~ /^!dns/i) {
       send_dns_lookup($heap, $nid, $channel, $nick, $msg);
    } elsif ($msg =~ /^!help$/i) {
@@ -921,6 +934,20 @@ sub create_irc_connection {
    return { $irc, $session };
 }
 
+# XXX: finish translate this from bash to perl ;)
+#sub mkpasswd {
+#   my $charset = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789~!@#$%^&*()-=_+;:<>?,./';
+#   my $len = 24;
+   
+#   [ ! -z "$1" ] && length=$1
+
+#   str=""
+#   for i in $(seq 1 $length); do
+#       char=${charset:$RANDOM % ${#charset}:1}
+#       str+=${char}
+#   done
+#   return $str
+}
 ######################################################
 # DNS Utilities #
 # non-blocking dns lookup
@@ -1281,8 +1308,11 @@ sub send_help {
    $irc->yield(privmsg => $target => "*** HELP \$=admin, #=chan only, \@=privmsg only ***");
    $irc->yield(privmsg => $target => "!adsb       Spotted air traffic nearby");
    $irc->yield(privmsg => $target => "!birds      Get a summary of birds heard today by BirdNET");
+   $irc->yield(privmsg => $target => "!convert    Convert between units: !convert [value] [from] [to] - ex: !convert 35.4 degF degC");
    $irc->yield(privmsg => $target => "!dns        Perform a DNS query - arguments required: [type] [address]");
+   $irc->yield(privmsg => $target => "!grid       Convert grid square to WGS-84 lat, lon ex: !grid fm21");
    $irc->yield(privmsg => $target => "!join       Add a channel to the bot and join it (\@\$)");
+   $irc->yield(privmsg => $target => "!latlon     Convert a WGS-84 lat, lon to maidenhead");
    $irc->yield(privmsg => $target => "!login      Login to the bot (\@)");
    $irc->yield(privmsg => $target => "!logout     Logout from the bot (\@)");
    $irc->yield(privmsg => $target => "!part       Remove a channel from the bot and part it (\@\$)");

@@ -35,3 +35,14 @@ irc:
     url: http://127.0.0.1:9990/current/
 #     type: cache
 #     path: /tmp/ambientwx.current
+
+sensors:
+  database: sensors.db
+  debug: 5
+  hass_api_url: http://10.1.2.3:8123/api
+  hass_api_key: your-hass-api-key-here
+  forwarders:
+    ircbox:
+      enabled: true
+      type: POST
+      url: http://10.8.1.105:9990/report/sensors/

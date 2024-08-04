@@ -657,11 +657,12 @@ sub on_public_message {
       $cmd = $1;
    }
 
+   print "cmd: $cmd, args: " . Dump(@args) . "\n";
    if ($msg =~ /^!adsb$/i) {
       bot_adsb($channel, $heap);
    } elsif ($msg =~ /^!birds$/i) {
       bot_birds($channel, $heap);
-   } elsif ($msg =~ /^!convert$/i) {
+   } elsif ($msg =~ /^!convert/i) {
       bot_convert($nick, $cmd, @args, $heap);
    } elsif ($msg =~ /^!dns/i) {
       bot_dns($heap, $nid, $channel, $nick, $msg);

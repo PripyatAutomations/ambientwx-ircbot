@@ -662,7 +662,7 @@ sub on_public_message {
    } elsif ($msg =~ /^!birds$/i) {
       bot_birds($channel, $heap);
    } elsif ($msg =~ /^!convert$/i) {
-      bot_convert($nick, $command, @args, $heap);
+      bot_convert($nick, $cmd, @args, $heap);
    } elsif ($msg =~ /^!dns/i) {
       bot_dns($heap, $nid, $channel, $nick, $msg);
    } elsif ($msg =~ /^!help$/i) {
@@ -964,7 +964,8 @@ sub create_irc_connection {
 #       str+=${char}
 #   done
 #   return $str
-}
+#}
+
 ######################################################
 # DNS Utilities #
 # non-blocking dns lookup

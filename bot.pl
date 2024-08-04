@@ -659,11 +659,11 @@ sub on_public_message {
 
    print "cmd: $cmd, args: " . Dump(@args) . "\n";
    if ($msg =~ /^!adsb$/i) {
-      bot_adsb($channel, $heap);
+      bot_adsb($channel, $nick, $heap);
    } elsif ($msg =~ /^!birds$/i) {
-      bot_birds($channel, $heap);
+      bot_birds($channel, $nick, $heap);
    } elsif ($msg =~ /^!convert/i) {
-      bot_convert($nick, $cmd, @args, $heap);
+      bot_convert($nick, $cmd, $heap, @args);
    } elsif ($msg =~ /^!dns/i) {
       bot_dns($heap, $nid, $channel, $nick, $msg);
    } elsif ($msg =~ /^!help$/i) {
@@ -713,9 +713,9 @@ sub on_private_message {
    print "[$network] *$nick* $msg\n";
 
    if ($msg =~ /^!adsb$/i) {
-      bot_adsb($nick, $heap);
+      bot_adsb($nick, $nick, $heap);
    } elsif ($msg =~ /^!birds$/i) {
-      bot_birds($nick, $heap);
+      bot_birds($nick $nick, $heap);
    } elsif ($msg =~ /^!dns/i) {
       bot_dns($heap, $nid, $nick, $nick, $msg);
    } elsif ($msg =~ /^!help$/i) {
@@ -1326,18 +1326,14 @@ sub convert_units {
 }
 
 sub bot_convert {
-   my ($nick, $command, @args, $heap) = @_;
+   my ($nick, $command, $heap, @args) = @_;
    my $irc = $heap->{irc};
 
-   if ($command eq '!convert' && @args == 3) {
-      my ($value, $from_unit, $to_unit) = @args;
+   my ($value, $from_unit, $to_unit) = @args;
 
-      if ($value =~ /^-?\d+(\.\d+)?$/) {
-         my $converted_value = convert_units($value, $from_unit, $to_unit);
-         $irc->yield(privmsg => $nick => "$nick: Converted: $value $from_unit = $converted_value $to_unit");
-      } else {
-         $irc->yield(privmsg => $nick => "Invalid value: $value");
-      }
+   if ($value =~ /^-?\d+(\.\d+)?$/) {
+      my $converted_value = convert_units($value, $from_unit, $to_unit);
+      $irc->yield(privmsg => $nick => "$nick: Converted: $value $from_unit = $converted_value $to_unit");
    } else {
       $irc->yield(privmsg => $nick => "Usage: !convert <value> <from_unit> <to_unit>");
    }
@@ -1347,13 +1343,18 @@ sub bot_convert {
 # Responses to IRC commands (!triggers) #
 ###############################################################################
 sub bot_adsb {
+   my ($target, $nick, $heap) = @_;
+   my $irc = $heap->{irc};
+   my $nid = $heap->{nid};
+   my $network = get_network_name($nid);
+   $irc->yield($target, "$nick: ADSB receiver is offline, try later!");
    return 0;
 }
 
 sub bot_help {
    my ( $target, $heap ) = @_;
    my $irc = $heap->{irc};
-   $irc->yield(privmsg => $target => "*** HELP \$=admin, #=chan only, \@=privmsg only ***");
+   $irc->yield(privmsg => $target => "*** HELP \$=admin, #=chan only, \@=privmsg only, #=chan only ***");
    $irc->yield(privmsg => $target => "!adsb       Spotted air traffic nearby");
    $irc->yield(privmsg => $target => "!birds      Get a summary of birds heard today by BirdNET");
    $irc->yield(privmsg => $target => "!convert    Convert between units: !convert [value] [from] [to] - ex: !convert 35.4 degF degC");

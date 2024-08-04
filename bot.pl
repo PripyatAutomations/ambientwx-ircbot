@@ -715,7 +715,7 @@ sub on_private_message {
    if ($msg =~ /^!adsb$/i) {
       bot_adsb($nick, $nick, $heap);
    } elsif ($msg =~ /^!birds$/i) {
-      bot_birds($nick $nick, $heap);
+      bot_birds($nick, $nick, $heap);
    } elsif ($msg =~ /^!dns/i) {
       bot_dns($heap, $nid, $nick, $nick, $msg);
    } elsif ($msg =~ /^!help$/i) {

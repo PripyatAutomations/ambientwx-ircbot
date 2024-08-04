@@ -572,7 +572,7 @@ sub sanitize_channel_name {
     return $input;
 }
 
-sub bot_start {
+sub irc_start {
    my ($kernel, $heap) = @_[KERNEL, HEAP];
    my $irc = $heap->{irc};
    my $nid = $heap->{nid};
@@ -624,6 +624,16 @@ sub on_ctcp_version {
    $irc->yield(ctcpreply => $nick => 'VERSION $botbrand/$version');
 }
 
+sub err_no_privs {
+   my ($heap, $nick, $cmd) = @_;
+   my $irc = $heap->{irc};
+   my $nid = $heap->{nid};
+   my $network = get_network_name($nid);
+
+   print "*AUTH* Unprivileged user $nick on $network ($nid) attempted to use $cmd.\n";
+   $irc->yield(notice => $nick => "You do not have permission to use $cmd on this bot. Maybe you need to !login?");
+}   
+
 sub on_public_message {
    my ($kernel, $who, $where, $msg, $heap) = @_[KERNEL, ARG0, ARG1, ARG2, HEAP];
    my $nick = (split /!/, $who)[0];
@@ -640,44 +650,43 @@ sub on_public_message {
    my @args;
 
    if ($msg =~ /^!(\w+)\s+(.*)$/) {
-      $cmd = $1;
+      $cmd = "!$1";
       my @args = split(/\s+/, $2);
    } else {
-      print "xxx\n";
+      # no options
+      $cmd = $1;
    }
 
    if ($msg =~ /^!adsb$/i) {
-      send_adsb($channel, $heap);
+      bot_adsb($channel, $heap);
    } elsif ($msg =~ /^!birds$/i) {
-      send_birds($channel, $heap);
+      bot_birds($channel, $heap);
    } elsif ($msg =~ /^!convert$/i) {
-      print "$cmd\n";
+      bot_convert($nick, $command, @args, $heap);
    } elsif ($msg =~ /^!dns/i) {
-      send_dns_lookup($heap, $nid, $channel, $nick, $msg);
+      bot_dns($heap, $nid, $channel, $nick, $msg);
    } elsif ($msg =~ /^!help$/i) {
-      send_help($nick, $heap);
+      bot_help($nick, $heap);
    } elsif ($msg =~ /^!quit$/i) {
       if (check_auth($nick, $heap->{nid}, 'admin')) {
          print "* Got QUIT command from $nick in $channel on $network ($nid) - exiting!\n";
          $irc->yield(shutdown => "Bot is shutting down as requested by $nick on $network ($nid)");
       } else {
-         print "* Got QUIT command from $nick in $channel on $network ($nid) - ignoring due to no privileges\n";
-         $irc->yield(notice => $nick => "You do not have permission to shutdown the bot!");
+         err_no_privs($heap, $nick, 'RESTART');
       }
    } elsif ($msg =~ /^!restart$/i) {
       if (check_auth($nick, $heap->{nid}, 'admin')) {
          print "* Got RESTART command from $nick in $channel, exiting!\n";
          $irc->yield(shutdown => "Bot is restarting as requested by $nick on $network ($nid)");
       } else {
-         print "* Got RESTART command from $nick in $channel on $network ($nid) - ignoring due to no privileges\n";
-         $irc->yield(notice => $nick => "You do not have permission to restart the bot!");
+         err_no_privs($heap, $nick, 'RESTART');
       }
    } elsif ($msg =~ /^!sensors$/i) {
-      send_sensors($channel, $heap);
+      bot_sensors($channel, $heap);
    } elsif ($msg =~ /^!tacos$/i) {
-      send_wx($channel, $heap);
+      bot_tacos($channel, $heap);
    } elsif ($msg =~ /^!uptime$/i) {
-      send_uptime($channel, $nick, $heap);
+      bot_uptime($channel, $nick, $heap);
    }
 }
 
@@ -689,19 +698,30 @@ sub on_private_message {
    my $nid = $heap->{nid};
    my $network = get_network_name($nid);
 
-   print "*$nick\@[$server]* $msg\n";
+   my $cmd;
+   my @args;
+
+   if ($msg =~ /^!(\w+)\s+(.*)$/) {
+      $cmd = "!$1";
+      my @args = split(/\s+/, $2);
+   } else {
+      # no options
+      $cmd = $1;
+   }
+
+   print "[$network] *$nick* $msg\n";
 
    if ($msg =~ /^!adsb$/i) {
-      send_adsb($nick, $heap);
+      bot_adsb($nick, $heap);
    } elsif ($msg =~ /^!birds$/i) {
-      send_birds($nick, $heap);
+      bot_birds($nick, $heap);
    } elsif ($msg =~ /^!dns/i) {
-      send_dns_lookup($heap, $nid, $nick, $nick, $msg);
+      bot_dns($heap, $nid, $nick, $nick, $msg);
    } elsif ($msg =~ /^!help$/i) {
-      send_help($nick, $heap);
+      bot_help($nick, $heap);
    } elsif ($msg =~ /^!join\s+(\S+)\s+(\S+)(?:\s+(\S+))?$/i) {
       my ($chan, $network, $key) = ($1, $2, $3);
-      add_channel($nick, $heap, $chan, $network, $key);
+      bot_join($nick, $heap, $chan, $network, $key);
    } elsif ($msg =~ /^!login\s+(\S+)\s+(\S+)$/i) {
       my ($username, $password) = ($1, $2);
       do_login($heap, $nick, $username, $nid, $password);
@@ -712,14 +732,13 @@ sub on_private_message {
       do_logout($nick);
    } elsif ($msg =~ /^!part\s+(\S+)\s+(\S+)$/i) {
       my ($chan, $network) = ($1, $2);
-      remove_channel($nick, $heap, $chan, $network);
+      bot_part($nick, $heap, $chan, $network);
    } elsif ($msg =~ /^!quit$/i) {
       if (check_auth($nick, $nid, 'admin')) {
          print "* Got QUIT command from $nick on $network ($nid), exiting!\n";
          $irc->yield(shutdown => "Bot is shutting down as requested by $nick on $network ($nid)");
        } else {
-         print "* Got QUIT command from $nick on $network ($nid) - ignoring due to no privileges\n";
-         $irc->yield(notice => $nick => "You do not have permission to shutdown the bot!");
+         err_no_privs($heap, $nick, 'QUIT');
       }
    } elsif ($msg =~ /^!reload$/i) {
       if (check_auth($nick, $nid, 'admin')) {
@@ -727,31 +746,29 @@ sub on_private_message {
          $irc->yield(notice => $nick => "Reloading!");
          reload_db();
       } else {
-         print "* Got RELOAD command from $nick on $network ($nid) - ignoring due to no privileges\n";
-         $irc->yield(notice => $nick => "You do not have permission to reload the bot!");
+         err_no_privs($heap, $nick, 'RELOAD');
       }
    } elsif ($msg =~ /^!restart$/i) {
       if (check_auth($nick, $nid, 'admin')) {
          print "* Got RESTART command from $nick on $network ($nid)- exiting!\n";
          $irc->yield(shutdown => "Bot is restarting as requested by $nick on $network ($nid)");
       } else {
-         print "* Got RESTART command from $nick on $network ($nid) - ignoring due to no privileges\n";
-         $irc->yield(notice => $nick => "You do not have permission to restart the bot!");
+         err_no_privs($heap, $nick, 'RESTART');
       }
    } elsif ($msg =~ /^!sensors$/i) {
-      send_sensors($nick, $heap);
+      bot_sensors($nick, $heap);
    } elsif ($msg =~ /^!tacos$/i) {
-      send_wx($nick, $heap);
+      bot_tacos($nick, $heap);
    } elsif ($msg =~ /^!uptime$/i) {
-      send_uptime($nick, $nick, $heap);
+      bot_uptime($nick, $nick, $heap);
    } elsif ($msg =~ /^!users$/i) {
-      dump_users($nick, $heap);
+      bot_users($nick, $heap);
    }
 }
 
 # Ping ourselves, but only if we haven't seen any traffic since the last ping. 
 # This prevents us from pinging ourselves more than necessary (which tends to get noticed by server operators).
-sub bot_do_autoping {
+sub irc_autoping {
    my ($kernel, $heap) = @_[KERNEL, HEAP];
 
    $kernel->post(poco_irc => userhost => $heap->{nick})
@@ -761,7 +778,7 @@ sub bot_do_autoping {
    $kernel->delay(autoping => 300);
 }
 
-sub bot_reconnect {
+sub irc_reconnect {
    my $kernel = $_[KERNEL];
 
    # Throttle reconnecting
@@ -892,8 +909,8 @@ sub create_irc_connection {
 
    my $session = POE::Session->create(
        inline_states => {
-           _start            => \&bot_start,
-           autoping          => \&bot_do_autoping,
+           _start            => \&irc_start,
+           autoping          => \&irc_autoping,
            dns_response      => \&dns_response,
            irc_001           => \&on_bot_001,
 #           irc_bot_action    => \&irc_bot_action,
@@ -906,12 +923,12 @@ sub create_irc_connection {
            irc_ctcp_action   => \&on_ctcp_action,
            irc_ctcp_version  => \&on_ctcp_version,
            irc_connected     => \&on_connected,
-           irc_disconnected  => \&bot_reconnect,
-           irc_error         => \&bot_reconnect,
+           irc_disconnected  => \&irc_reconnect,
+           irc_error         => \&irc_reconnect,
            irc_join          => \&on_join,
            irc_part          => \&on_part,
            irc_quit          => \&on_quit,
-           irc_socketerr     => \&bot_reconnect,
+           irc_socketerr     => \&irc_reconnect,
            irc_snotice       => \&on_snotice,
            irc_msg           => \&on_private_message,
            irc_notice        => \&on_private_message,
@@ -951,7 +968,7 @@ sub create_irc_connection {
 ######################################################
 # DNS Utilities #
 # non-blocking dns lookup
-sub send_dns_lookup {
+sub bot_dns {
    my ($heap, $nid, $where, $nick, $msg) = @_;
    my ($cmd, $type, $record) = split(' ', $msg, 3);
    my $network = get_network_name($nid);
@@ -1279,7 +1296,7 @@ sub get_wx_msg {
    return $message;
 }
 
-sub send_wx {
+sub bot_tacos {
    my ( $target, $heap ) = @_;
    my $message = get_wx_msg($heap);
    my $irc = $heap->{irc};
@@ -1287,7 +1304,7 @@ sub send_wx {
    $irc->yield(privmsg => $target => $message);
 }
 
-sub send_sensors {
+sub bot_sensors {
    my ( $target, $heap ) = @_;
    my $message = get_sensor_msg();
    my $irc = $heap->{irc};
@@ -1295,14 +1312,43 @@ sub send_sensors {
    $irc->yield(privmsg => $target => $message);
 }
 
+####################
+# unit conversions #
+####################
+sub convert_units {
+   my ($value, $from_unit, $to_unit) = @_;
+
+   my $converted_value = convert($value, $from_unit, $to_unit);
+
+   return defined $converted_value ? sprintf("%.2f", $converted_value) : "Conversion error!";
+}
+
+sub bot_convert {
+   my ($nick, $command, @args, $heap) = @_;
+   my $irc = $heap->{irc};
+
+   if ($command eq '!convert' && @args == 3) {
+      my ($value, $from_unit, $to_unit) = @args;
+
+      if ($value =~ /^-?\d+(\.\d+)?$/) {
+         my $converted_value = convert_units($value, $from_unit, $to_unit);
+         $irc->yield(privmsg => $nick => "$nick: Converted: $value $from_unit = $converted_value $to_unit");
+      } else {
+         $irc->yield(privmsg => $nick => "Invalid value: $value");
+      }
+   } else {
+      $irc->yield(privmsg => $nick => "Usage: !convert <value> <from_unit> <to_unit>");
+   }
+}
+
 ###############################################################################
 # Responses to IRC commands (!triggers) #
 ###############################################################################
-sub send_adsb {
+sub bot_adsb {
    return 0;
 }
 
-sub send_help {
+sub bot_help {
    my ( $target, $heap ) = @_;
    my $irc = $heap->{irc};
    $irc->yield(privmsg => $target => "*** HELP \$=admin, #=chan only, \@=privmsg only ***");
@@ -1325,7 +1371,7 @@ sub send_help {
    $irc->yield(privmsg => $target => "!users      List user accounts (\@)");
 }
 
-sub send_birds {
+sub bot_birds {
    my ( $target, $heap ) = @_;
    my $irc = $heap->{irc};
 #    update_birds();
@@ -1335,7 +1381,7 @@ sub send_birds {
    $irc->yield(privmsg => $target => $birds_msg);
 }
 
-sub dump_users {
+sub bot_users {
    my ($nick, $heap) = @_;
    my $irc = $heap->{irc};
    my $nid = $heap->{nid};
@@ -1351,16 +1397,17 @@ sub dump_users {
       $disabled = " *DISABLED*" if ($users{$uid}->{disabled});
       my $loggedin = "";
       my $uname = $users{$uid}->{current_nick};
+
       if ($users{$uid}->{logged_in}) {
          $loggedin = " logged in as $uname";
       }
-      $irc->yield(notice => $nick => "* $account ($ident\@$host) - [$privs]$loggedin$disabled");
+      $irc->yield(privmsg => $nick => "* $account ($ident\@$host) - [$privs]$loggedin$disabled");
    }
    $irc->yield(notice => $nick => "* End of !users *");
    return;
 }
 
-sub send_uptime {
+sub bot_uptime {
    my ($target, $nick, $heap) = @_;
    my $irc = $heap->{irc};
    my $nid = $heap->{nid};
@@ -1381,11 +1428,11 @@ sub send_uptime {
    return;
 }
 
-sub add_channel {
+sub bot_join {
    my ($target, $heap, $channel, $network, $key) = @_;
 
    if (!defined($network) || !defined($channel) || $network eq '' || $channel eq '') {
-      print " invalid data in add_channel\n";
+      print " invalid data in bot_join\n";
       return;
    }
 
@@ -1409,11 +1456,11 @@ sub add_channel {
 
 }
 
-sub remove_channel {
+sub bot_part {
    my ($target, $heap, $channel, $network) = @_;
 
    if (!defined($network) || !defined($channel) || $network eq '' || $channel eq '') {
-      print " invalid data in add_channel\n";
+      print " invalid data in bot_join\n";
       return;
    }
 
